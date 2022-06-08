@@ -2,6 +2,7 @@
 
 https://bgolus.medium.com/rendering-a-sphere-on-a-quad-13c92025570c
 https://www.shadertoy.com/view/WtlGWr
+https://www.shadertoy.com/view/3tyyDz
 https://github.com/netri/Neitri-Unity-Shaders
 
 */
@@ -72,6 +73,7 @@ Shader "SCRN/Dice"
             float3 lDir;
             float4 col;
             float depth;
+            float matID;
         };
 
         // from http://answers.unity.com/answers/641391/view.html
@@ -219,6 +221,15 @@ Shader "SCRN/Dice"
             return c;
         }
 
+        float fOpIntersectionChamfer(float a, float b, float r) {
+            return max(max(a, b), (a + r + b)*sqrt(0.5));
+        }
+
+        // Difference can be built from Intersection or Union:
+        float fOpDifferenceChamfer (float a, float b, float r) {
+            return fOpIntersectionChamfer(a, -b, r);
+        }
+
         // https://www.shadertoy.com/view/WtlGWr
         // positions of all the dimples in the dice
         static const float3 dips[21] =
@@ -283,15 +294,6 @@ Shader "SCRN/Dice"
             0.06
         };
 
-        float fOpIntersectionChamfer(float a, float b, float r) {
-            return max(max(a, b), (a + r + b)*sqrt(0.5));
-        }
-
-        // Difference can be built from Intersection or Union:
-        float fOpDifferenceChamfer (float a, float b, float r) {
-            return fOpIntersectionChamfer(a, -b, r);
-        }
-
         // https://www.shadertoy.com/view/wsSGDG
         float sdOctahedron(float3 p, float s) {
             p = abs(p);
@@ -318,7 +320,7 @@ Shader "SCRN/Dice"
         uniform float4 _Test;
 
         // distance function of the outside
-        float mapOut(float3 p)
+        float2 mapOut(float3 p)
         {
             float s = sdOctahedron(p, _EdgeRound);
             float c = box(p, 0.29.xxx);
@@ -351,24 +353,31 @@ Shader "SCRN/Dice"
             ccut = fOpDifferenceChamfer(bcut, ccut, 0.005);
             dice = min(dice, ccut);
 
+            float matID = 0.0;
+            matID = dice == ccut ? 1.0 : matID;
+
             //short circuting for better performance
-            if (dice > 0.001) return dice;
+            if (dice > 0.001) return float2(dice, matID);
 
             float d = sphere(p + dips[0], dipsR[0]);
             for (int i = 1; i < 21; i++) {
                 d = min(d, sphere(p + dips[i], dipsR[i]));
             }
-            return max(dice, -d);
+            dice = max(dice, -d);
+
+            matID =  abs(dice + d - 0.005) < 0.005 ? 2.0 : matID;
+
+            return float2(dice, matID);
 
             //return dice;
         }
 
         float3 sdfNormal (float3 p) {
-            const float2 eps = float2(0.0001, 0.);
+            const float2 eps = float2(0.003, 0.);
             return normalize( float3(
-                mapOut(p+eps.xyy) - mapOut(p-eps.xyy),
-                mapOut(p+eps.yxy) - mapOut(p-eps.yxy),
-                mapOut(p+eps.yyx) - mapOut(p-eps.yyx)
+                mapOut(p+eps.xyy).x - mapOut(p-eps.xyy).x,
+                mapOut(p+eps.yxy).x - mapOut(p-eps.yxy).x,
+                mapOut(p+eps.yyx).x - mapOut(p-eps.yyx).x
             ) );
         }
 
@@ -380,14 +389,15 @@ Shader "SCRN/Dice"
             bool hit = false;
             
             for (float i = 0.; i < max_steps; i++) {
-                float d = mapOut(p);
+                float2 d = mapOut(p);
                 // more detail the closer
-                if (d < (0.0001 * (t + 0.1))) {
+                if (d.x < (0.0001 * (t + 1.0))) {
                     hit = true;
+                    mI.matID = d.y;
                     break;
                 }
-                p += d * rd;
-                t += d;
+                p += d.x * rd;
+                t += d.x;
                 if (any(abs(p) > 1.0)) break;
             }
 
@@ -398,6 +408,7 @@ Shader "SCRN/Dice"
         uniform float _Smoothness;
         uniform samplerCUBE _CubeTex;
 
+        // https://catlikecoding.com/unity/tutorials/scriptable-render-pipeline/reflections/
         float3 BoxProjection(float3 direction, float3 position,
             float3 cubemapPosition, float3 boxMin, float3 boxMax) {
             float3 factors = ((direction > 0 ? boxMax : boxMin) - position) / direction;
@@ -452,36 +463,36 @@ Shader "SCRN/Dice"
         };
 
         // d4rkpl4y3r's code for SPS-I compatibility
-        #ifdef UNITY_STEREO_INSTANCING_ENABLED
+    #ifdef UNITY_STEREO_INSTANCING_ENABLED
         Texture2DArray<float> _CameraDepthTexture;
         Texture2DArray _ScreenTexture;
-        #else
+    #else
         Texture2D<float> _CameraDepthTexture;
         Texture2D _ScreenTexture;
-        #endif
+    #endif
 
         SamplerState point_clamp_sampler;
 
         float SampleScreenDepth(float2 uv)
         {
-            #ifdef UNITY_STEREO_INSTANCING_ENABLED
+        #ifdef UNITY_STEREO_INSTANCING_ENABLED
             return _CameraDepthTexture.SampleLevel(point_clamp_sampler, float3(uv, unity_StereoEyeIndex), 0);
-            #else
+        #else
             return _CameraDepthTexture.SampleLevel(point_clamp_sampler, uv, 0);
-            #endif
+        #endif
         }
 
         bool DepthTextureExists()
         {
-            #ifdef UNITY_STEREO_INSTANCING_ENABLED
+        #ifdef UNITY_STEREO_INSTANCING_ENABLED
             float3 dTexDim, sTexDim;
             _CameraDepthTexture.GetDimensions(dTexDim.x, dTexDim.y, dTexDim.z);
             _ScreenTexture.GetDimensions(sTexDim.x, sTexDim.y, sTexDim.z);
-            #else
+        #else
             float2 dTexDim, sTexDim;
             _CameraDepthTexture.GetDimensions(dTexDim.x, dTexDim.y);
             _ScreenTexture.GetDimensions(sTexDim.x, sTexDim.y);
-            #endif
+        #endif
             return all(dTexDim == sTexDim);
         }
 
@@ -533,6 +544,7 @@ Shader "SCRN/Dice"
             mI.lDir = float3(0., 1., 0.);
             mI.col = float4(1., 1., 1., 1.);
             mI.depth = 0.0;
+            mI.matID = 0.0;
 
             float3 worldPos;
             float3 normal;
@@ -543,7 +555,7 @@ Shader "SCRN/Dice"
             // If there's no shadow pass just do the ray march
             if (DepthTextureExists())
             {
-                march(mI, 256.0);
+                march(mI, 200.0);
                 clip(mI.col.a - 0.01);
                 surfacePos = mI.pos;
                 worldPos = mul(unity_ObjectToWorld, float4(surfacePos, 1.0));
@@ -565,7 +577,9 @@ Shader "SCRN/Dice"
                 worldPos += UNITY_MATRIX_I_V._14_24_34;
                 clipPos = UnityWorldToClipPos(worldPos);
                 surfacePos = mul(unity_WorldToObject, float4(worldPos, 1.0));
-                if (mapOut(surfacePos) > 0.0001 * distance(worldPos1, UNITY_MATRIX_I_V._14_24_34)) discard;
+                float2 dist = mapOut(surfacePos);
+                mI.matID = dist.y;
+                if (dist.x > 0.0002 * distance(worldPos1, UNITY_MATRIX_I_V._14_24_34)) discard;
             }
 
             normal = sdfNormal(surfacePos);
@@ -576,6 +590,8 @@ Shader "SCRN/Dice"
 
             // glass
             mI.col.rgb = surfSpecular(mI, worldPos);
+            if (mI.matID == 1.0) mI.col.rgb *= float3(0.1, 0.1, 1.0);
+            if (mI.matID == 2.0) mI.col.rgb *= float3(1.0, 0.1, 0.1);
 
             // stuff for directional shadow receiving
         #if defined (SHADOWS_SCREEN)
@@ -658,8 +674,9 @@ Shader "SCRN/Dice"
             mI.lDir = float3(0., 1., 0.);
             mI.col = float4(1., 1., 1., 1.);
             mI.depth = 0.0;
+            mI.matID = 0.0;
 
-            march(mI, 256.0);
+            march(mI, 200.0);
             clip(mI.col.a - 0.01);
             float3 surfacePos = mI.pos;
 
