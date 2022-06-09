@@ -15,6 +15,7 @@ Shader "SCRN/Dice"
         [NoScaleOffset] _TANoiseTexNearest ("Texture Assisted Noise Nearest", 2D) = "black" {}
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
         [Color] _GlassCol ("Glass Color", Color) = (1, 1, 1, 1)
+        [HDR] _CircleCol ("Circle Color", Color) = (1, 1, 1, 1)
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
@@ -410,7 +411,9 @@ Shader "SCRN/Dice"
             }
             dice = max(dice, -d);
 
-            matID =  abs(dice + d - 0.01) < 0.01 ? 2.0 : matID;
+            float dc = abs(dice + d - 0.01);
+            matID = dc < 0.01 ? 2.0 : matID;
+            matID += dc < 0.01 ? dc : 0.0; // store intensity
 
             return float2(dice, matID);
         }
@@ -509,6 +512,21 @@ Shader "SCRN/Dice"
             return col;
         }
 
+        uniform float3 _CircleCol;
+
+        float3 applyMat(float matID, float3 pos, float3 inCol)
+        {
+            float3 col = inCol;
+            if (matID < 1.0);
+            else if (matID < 2.0) col = float3(0.1, 0.1, 2.0);
+            else if (matID < 3.0)
+            {
+                float scale = saturate(1.0 - (matID - floor(matID)) / 0.01);
+                col *= _CircleCol;
+            }
+            return col;
+        }
+
         void marchInner(inout marchInOut mI, float max_steps)
         {
             float3 col = mI.col.rgb;
@@ -540,15 +558,14 @@ Shader "SCRN/Dice"
 
             // do colors
             float3 colInner = refProbe(reflWorldPos, refrOut);
-            if (mI.matID == 1.0) colInner = float3(0.1, 0.1, 2.0);
-            if (mI.matID == 2.0) colInner = float3(2.0, 0.1, 0.1);
+            colInner = applyMat(mI.matID, mI.pos, colInner);
+
             col = lerp(colInner, c.rgb, c.a);
 
             float fresnel = 1.0 - pow(dot(n, -iniDir), 2);
             col += refProbe(iniWorldPos, refl) * fresnel * diceCheapAO(iniPos, n);
+            col = applyMat(iniMat, iniPos, col);
 
-            if (iniMat == 1.0) col = float3(0.1, 0.1, 2.0);
-            if (iniMat == 2.0) col = float3(2.0, 0.1, 0.1);
             mI.col.rgb = col;
         }
 
