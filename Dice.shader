@@ -2,7 +2,7 @@
 
 https://bgolus.medium.com/rendering-a-sphere-on-a-quad-13c92025570c
 https://www.shadertoy.com/view/WtlGWr
-https://www.shadertoy.com/view/3tyyDz
+https://www.shadertoy.com/view/3tyyDz cloud idea
 https://github.com/netri/Neitri-Unity-Shaders
 
 */
@@ -14,9 +14,14 @@ Shader "SCRN/Dice"
         [NoScaleOffset] _TANoiseTex ("Texture Assisted Noise Bilinear", 2D) = "black" {}
         [NoScaleOffset] _TANoiseTexNearest ("Texture Assisted Noise Nearest", 2D) = "black" {}
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
+        [Color] _GlassCol ("Glass Color", Color) = (1, 1, 1, 1)
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
+        _CloudScale ("Cloud Scale", Range(2, 20)) = 11.0
+        _CloudOffset ("Cloud Offset", Vector) = (0, 0, 0, 0)
+        _CloudIntensity ("Cloud Intensity", Range(0.02, 0.15)) = 0.05
+        _CloudPuff ("Cloud Puffiness", Range(-0.06, 0.06)) = -0.06
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
     }
     SubShader
@@ -74,6 +79,7 @@ Shader "SCRN/Dice"
             float4 col;
             float depth;
             float matID;
+            float dist;
         };
 
         // from http://answers.unity.com/answers/641391/view.html
@@ -200,36 +206,6 @@ Shader "SCRN/Dice"
             return o;
         }
 
-        // https://mercury.sexy/hg_sdf/
-        // Shortcut for 45-degrees rotation
-        void pR45(inout float2 p) {
-            p = (p + float2(p.y, -p.x)) * sqrt(0.5);
-        }
-
-        // Repeat around the origin by a fixed angle.
-        // For easier use, num of repetitions is use to specify the angle.
-        float pModPolar(inout float2 p, float repetitions) {
-            float angle = 2*UNITY_PI/repetitions;
-            float a = atan2(p.y, p.x) + angle/2.;
-            float r = length(p);
-            float c = floor(a/angle);
-            a = mod(a,angle) - angle/2.;
-            p = float2(cos(a), sin(a))*r;
-            // For an odd number of repetitions, fix cell index of the cell in -x direction
-            // (cell index would be e.g. -5 and 5 in the two halves of the cell):
-            if (abs(c) >= (repetitions/2)) c = abs(c);
-            return c;
-        }
-
-        float fOpIntersectionChamfer(float a, float b, float r) {
-            return max(max(a, b), (a + r + b)*sqrt(0.5));
-        }
-
-        // Difference can be built from Intersection or Union:
-        float fOpDifferenceChamfer (float a, float b, float r) {
-            return fOpIntersectionChamfer(a, -b, r);
-        }
-
         // https://www.shadertoy.com/view/WtlGWr
         // positions of all the dimples in the dice
         static const float3 dips[21] =
@@ -268,31 +244,94 @@ Shader "SCRN/Dice"
             // one
             0.12,
             // two
-            0.08,
-            0.08,
+            0.08, 0.08,
             // three
-            0.07,
-            0.07,
-            0.07,
+            0.07, 0.07, 0.07,
             // four
-            0.07,
-            0.07,
-            0.07,
-            0.07,
+            0.07, 0.07, 0.07, 0.07,
             // five
-            0.06,
-            0.06,
-            0.06,
-            0.06,
-            0.06,
+            0.06, 0.06, 0.06, 0.06, 0.06,
             // six
-            0.06,
-            0.06,
-            0.06,
-            0.06,
-            0.06,
-            0.06
+            0.06, 0.06, 0.06, 0.06, 0.06, 0.06
         };
+
+        uniform float _Smoothness;
+        uniform samplerCUBE _CubeTex;
+
+        // https://catlikecoding.com/unity/tutorials/scriptable-render-pipeline/reflections/
+        float3 BoxProjection(float3 direction, float3 position,
+            float3 cubemapPosition, float3 boxMin, float3 boxMax) {
+            float3 factors = ((direction > 0 ? boxMax : boxMin) - position) / direction;
+            float scalar = min(min(factors.x, factors.y), factors.z);
+            return direction * scalar + (position - cubemapPosition);
+        }
+
+        float3 refProbe(float3 worldPos, float3 reflVec)
+        {
+            float3 boxProject = BoxProjection(reflVec, worldPos,
+                unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin,
+                unity_SpecCube0_BoxMax);
+
+            float roughness = 1.0 - _Smoothness;
+            float4 boxProbe0 = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, boxProject, roughness);
+            boxProbe0.rgb = DecodeHDR(boxProbe0, unity_SpecCube0_HDR);
+
+            float3 indirectSpecular;
+            float blend = unity_SpecCube0_BoxMin.w;
+
+            [branch]
+            if (blend < 0.99999) {
+                float3 boxProject = BoxProjection(
+                    reflVec, worldPos,
+                    unity_SpecCube1_ProbePosition,
+                    unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax
+                );
+                float4 boxProbe1 = UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, boxProject, roughness);
+                boxProbe1.rgb = DecodeHDR(boxProbe1, unity_SpecCube1_HDR);
+                indirectSpecular = lerp(boxProbe1.rgb, boxProbe0.rgb, blend);
+            }
+            else
+            {
+                indirectSpecular = boxProbe0.rgb;
+            }
+
+            if (!any(indirectSpecular))
+            {
+                indirectSpecular = texCUBElod(_CubeTex, float4(reflVec, roughness));
+            }
+
+            return indirectSpecular;
+        }
+
+        // https://mercury.sexy/hg_sdf/
+        // Shortcut for 45-degrees rotation
+        void pR45(inout float2 p) {
+            p = (p + float2(p.y, -p.x)) * sqrt(0.5);
+        }
+
+        // Repeat around the origin by a fixed angle.
+        // For easier use, num of repetitions is use to specify the angle.
+        float pModPolar(inout float2 p, float repetitions) {
+            float angle = 2*UNITY_PI/repetitions;
+            float a = atan2(p.y, p.x) + angle/2.;
+            float r = length(p);
+            float c = floor(a/angle);
+            a = mod(a,angle) - angle/2.;
+            p = float2(cos(a), sin(a))*r;
+            // For an odd number of repetitions, fix cell index of the cell in -x direction
+            // (cell index would be e.g. -5 and 5 in the two halves of the cell):
+            if (abs(c) >= (repetitions/2)) c = abs(c);
+            return c;
+        }
+
+        float fOpIntersectionChamfer(float a, float b, float r) {
+            return max(max(a, b), (a + r + b)*sqrt(0.5));
+        }
+
+        // Difference can be built from Intersection or Union:
+        float fOpDifferenceChamfer (float a, float b, float r) {
+            return fOpIntersectionChamfer(a, -b, r);
+        }
 
         // https://www.shadertoy.com/view/wsSGDG
         float sdOctahedron(float3 p, float s) {
@@ -315,12 +354,18 @@ Shader "SCRN/Dice"
             return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0);
         }
 
+        uniform float4 _GlassCol;
         uniform float _EdgeCut;
         uniform float _EdgeRound;
+        uniform float _CloudScale;
+        uniform float _CloudIntensity;
+        uniform float _CloudPuff;
+        uniform float3 _CloudOffset;
+
         uniform float4 _Test;
 
         // distance function of the outside
-        float2 mapOut(float3 p)
+        float2 mapDice(float3 p)
         {
             float s = sdOctahedron(p, _EdgeRound);
             float c = box(p, 0.29.xxx);
@@ -357,7 +402,7 @@ Shader "SCRN/Dice"
             matID = dice == ccut ? 1.0 : matID;
 
             //short circuting for better performance
-            if (dice > 0.001) return float2(dice, matID);
+            if (dice > 0.01) return float2(dice, matID);
 
             float d = sphere(p + dips[0], dipsR[0]);
             for (int i = 1; i < 21; i++) {
@@ -365,23 +410,59 @@ Shader "SCRN/Dice"
             }
             dice = max(dice, -d);
 
-            matID =  abs(dice + d - 0.005) < 0.005 ? 2.0 : matID;
+            matID =  abs(dice + d - 0.01) < 0.01 ? 2.0 : matID;
 
             return float2(dice, matID);
-
-            //return dice;
         }
 
-        float3 sdfNormal (float3 p) {
-            const float2 eps = float2(0.003, 0.);
-            return normalize( float3(
-                mapOut(p+eps.xyy).x - mapOut(p-eps.xyy).x,
-                mapOut(p+eps.yxy).x - mapOut(p-eps.yxy).x,
-                mapOut(p+eps.yyx).x - mapOut(p-eps.yyx).x
-            ) );
+        // faster 4 tap normals
+        float3 diceNorm( in float3 p ){
+            const float2 e = float2(0.0015, -0.0015);
+            return normalize(
+                e.xyy*mapDice(p+e.xyy).x +
+                e.yyx*mapDice(p+e.yyx).x +
+                e.yxy*mapDice(p+e.yxy).x +
+                e.xxx*mapDice(p+e.xxx).x);
         }
 
-        void march(inout marchInOut mI, float max_steps)
+        // https://www.shadertoy.com/view/WsXSDH
+        // cheap AO using normals
+        float diceCheapAO(float3 p, float3 n)
+        {
+            float a = .5+.5*mapDice(p+n*.04)/.05;
+            a *= .6+.4*mapDice(p+n*.08)/.1;
+            a *= .7+.3*mapDice(p+n*.16)/.2;
+            return saturate(a * a);
+        }
+
+        static const float cref = 0.95;
+
+        float TA_map3( in float3 p )
+        {
+            float3 q = p - _CloudOffset;
+            float f;
+            f  = 0.50000*tanoise3_1d( q ); q = q*2.02;
+            f += 0.25000*tanoise3_1d( q ); q = q*2.03;
+            f += 0.12500*tanoise3_1d( q );
+            return f;
+        }
+
+        float mapClouds(in float3 p)
+        {
+            return TA_map3(p);
+        }
+
+        // faster 4 tap normals
+        float3 cloudNorm( in float3 p ){
+            const float2 e = float2(0.01, -0.01);
+            return normalize(
+                e.xyy*mapClouds(p+e.xyy) +
+                e.yyx*mapClouds(p+e.yyx) +
+                e.yxy*mapClouds(p+e.yxy) +
+                e.xxx*mapClouds(p+e.xxx));
+        }
+
+        void marchOuter(inout marchInOut mI, float max_steps)
         {
             float3 p = mI.ro;
             float3 rd = mI.rd;
@@ -389,9 +470,9 @@ Shader "SCRN/Dice"
             bool hit = false;
             
             for (float i = 0.; i < max_steps; i++) {
-                float2 d = mapOut(p);
+                float2 d = mapDice(p);
                 // more detail the closer
-                if (d.x < (0.0001 * (t + 1.0))) {
+                if (d.x < (0.001 * (t + 1.0))) {
                     hit = true;
                     mI.matID = d.y;
                     break;
@@ -403,57 +484,72 @@ Shader "SCRN/Dice"
 
             mI.pos = p;
             mI.col.a = hit ? 1.0 : 0.0;
+            mI.dist = t;
         }
 
-        uniform float _Smoothness;
-        uniform samplerCUBE _CubeTex;
-
-        // https://catlikecoding.com/unity/tutorials/scriptable-render-pipeline/reflections/
-        float3 BoxProjection(float3 direction, float3 position,
-            float3 cubemapPosition, float3 boxMin, float3 boxMax) {
-            float3 factors = ((direction > 0 ? boxMax : boxMin) - position) / direction;
-            float scalar = min(min(factors.x, factors.y), factors.z);
-            return direction * scalar + (position - cubemapPosition);
-        }
-
-        float3 surfSpecular(marchInOut mI, float3 worldPos)
+        // from Guil https://www.shadertoy.com/view/MtX3Ws
+        float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs)
         {
-            float fre = pow(1.0 - saturate(dot(mI.norm, mI.rd)), 4) * 2;
-            float3 reflNorm = reflect(mI.rd, mI.norm);
-            float3 boxProject = BoxProjection(reflNorm, worldPos,
-                unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin,
-                unity_SpecCube0_BoxMax);
-
-            float roughness = 1 - _Smoothness;
-            roughness *= (1.7 - 0.7 * roughness) * 6;
-            float4 boxProbe0 = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, boxProject, roughness);
-            boxProbe0.rgb = DecodeHDR(boxProbe0, unity_SpecCube0_HDR);
-
-            float3 indirectSpecular;
-            float blend = unity_SpecCube0_BoxMin.w;
-
-            [branch]
-            if (blend < 0.99999) {
-                float3 boxProject = BoxProjection(
-                    reflNorm, worldPos,
-                    unity_SpecCube1_ProbePosition,
-                    unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax
-                );
-                float4 boxProbe1 = UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, boxProject, roughness);
-                boxProbe1.rgb = DecodeHDR(boxProbe1, unity_SpecCube1_HDR);
-                indirectSpecular = lerp(boxProbe1.rgb, boxProbe0.rgb, blend);
-            }
-            else
+            const float dt = .02;
+            float t = mind;
+            float4 col= 0..xxxx;
+            float c = 0.;
+            for( float i = 0.; i < maxs; i++ )
             {
-                indirectSpecular = boxProbe0.rgb;
-            }
+                t+=dt*exp(-2.*c);
+                if( t > maxd || col.a >= 1.0) break;
+                float3 pos = ro+t*rd;
+                
+                c = mapClouds(pos);
+                
+                rd = normalize(lerp(rd, -cloudNorm(pos), _CloudPuff));  // Little refraction effect
+                
+                col = 0.99*col + _CloudIntensity * float4(c*c*c, c*c, c, c);
+            }    
+            return col;
+        }
 
-            if (!any(indirectSpecular))
-            {
-                indirectSpecular = texCUBElod(_CubeTex, float4(reflNorm, roughness));
-            }
+        void marchInner(inout marchInOut mI, float max_steps)
+        {
+            float3 col = mI.col.rgb;
+            float3 iniPos = mI.ro;
+            float3 iniDir = mI.rd;
+            float3 n = mI.norm;
+            float iniMat = mI.matID;
 
-            return indirectSpecular * fre;
+            float3 refl = reflect(mI.rd, n);
+            float3 refr = refract(mI.rd, n, cref);
+
+            mI.ro = mI.ro + refr * 2.0;
+            mI.rd = -refr;
+            marchOuter(mI, 16.0);
+
+            float3 nout = diceNorm(mI.pos);
+            float dout = mI.dist;
+            
+            dout = 2.0 - dout;
+            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps);
+
+            // If want the normal in the opposite direction we are inside not outside
+            nout *= -1.;
+            // Dirty trick to avoid refract returning a zero floattor when nornal and floattor are almost perpendicular and eta bigger than 1.
+            float3 refrOut = refract(refr, nout, lerp(1. / cref, 1., smoothstep(0.35, 0.20, dot(refr, -nout))));
+            
+            float3 iniWorldPos = mul(unity_ObjectToWorld, float4(iniPos, 1.0));
+            float3 reflWorldPos = mul(unity_ObjectToWorld, float4(mI.pos, 1.0));
+
+            // do colors
+            float3 colInner = refProbe(reflWorldPos, refrOut);
+            if (mI.matID == 1.0) colInner = float3(0.1, 0.1, 2.0);
+            if (mI.matID == 2.0) colInner = float3(2.0, 0.1, 0.1);
+            col = lerp(colInner, c.rgb, c.a);
+
+            float fresnel = 1.0 - pow(dot(n, -iniDir), 2);
+            col += refProbe(iniWorldPos, refl) * fresnel * diceCheapAO(iniPos, n);
+
+            if (iniMat == 1.0) col = float3(0.1, 0.1, 2.0);
+            if (iniMat == 2.0) col = float3(2.0, 0.1, 0.1);
+            mI.col.rgb = col;
         }
 
         #if defined(UNITY_PASS_FORWARDBASE) || defined(UNITY_PASS_FORWARDADD)
@@ -545,6 +641,7 @@ Shader "SCRN/Dice"
             mI.col = float4(1., 1., 1., 1.);
             mI.depth = 0.0;
             mI.matID = 0.0;
+            mI.dist = 0.0;
 
             float3 worldPos;
             float3 normal;
@@ -555,7 +652,7 @@ Shader "SCRN/Dice"
             // If there's no shadow pass just do the ray march
             if (DepthTextureExists())
             {
-                march(mI, 200.0);
+                marchOuter(mI, 200.0);
                 clip(mI.col.a - 0.01);
                 surfacePos = mI.pos;
                 worldPos = mul(unity_ObjectToWorld, float4(surfacePos, 1.0));
@@ -577,21 +674,16 @@ Shader "SCRN/Dice"
                 worldPos += UNITY_MATRIX_I_V._14_24_34;
                 clipPos = UnityWorldToClipPos(worldPos);
                 surfacePos = mul(unity_WorldToObject, float4(worldPos, 1.0));
-                float2 dist = mapOut(surfacePos);
+                float2 dist = mapDice(surfacePos);
                 mI.matID = dist.y;
-                if (dist.x > 0.0002 * distance(worldPos1, UNITY_MATRIX_I_V._14_24_34)) discard;
+                if (dist.x > 0.002 * distance(worldPos1, UNITY_MATRIX_I_V._14_24_34)) discard;
             }
 
-            normal = sdfNormal(surfacePos);
+            normal = diceNorm(surfacePos);
 
             mI.ro = surfacePos;
             mI.norm = normal;
             mI.depth = clipPos.z / clipPos.w;
-
-            // glass
-            mI.col.rgb = surfSpecular(mI, worldPos);
-            if (mI.matID == 1.0) mI.col.rgb *= float3(0.1, 0.1, 1.0);
-            if (mI.matID == 2.0) mI.col.rgb *= float3(1.0, 0.1, 0.1);
 
             // stuff for directional shadow receiving
         #if defined (SHADOWS_SCREEN)
@@ -636,6 +728,9 @@ Shader "SCRN/Dice"
         #endif // VERTEXLIGHT_ON
         #endif // UNITY_SHOULD_SAMPLE_SH
 
+            // do colors
+            marchInner(mI, 48.);
+
             //apply lighting
             mI.col.rgb *= lighting;
 
@@ -675,8 +770,9 @@ Shader "SCRN/Dice"
             mI.col = float4(1., 1., 1., 1.);
             mI.depth = 0.0;
             mI.matID = 0.0;
+            mI.dist = 0.0;
 
-            march(mI, 200.0);
+            marchOuter(mI, 200.0);
             clip(mI.col.a - 0.01);
             float3 surfacePos = mI.pos;
 
