@@ -19,7 +19,7 @@ Shader "SCRN/Dice"
         _CircleTex1Scale ("Texture Scale", Float) = 7
         [NoScaleOffset] _Matcap1 ("Border Matcap", 2D) = "white" {}
         [HDR] _BorderCol ("Border Color", Color) = (2.23, 2.23, 2.23, 1)
-        [HDR] _GlowCol ("Glow Color", Color) = (0, 0.62, 1.5, 1)
+        [HDR] _GlowCol ("Glow Color", Color) = (0, 1.1, 2.3, 1)
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
@@ -655,7 +655,7 @@ Shader "SCRN/Dice"
             for (float i = 0; i < 3; i++)
             {
                 float3 d = mapDice(p + rd * -0.05 * i);
-                li += 0.1 / (1.0 + d.z * d.z * (300.0 - 150.0 * audio1));
+                li += 0.1 / (1.0 + d.z * d.z * (300.0 - 50.0 * audio1));
             }
 
             return _GlowCol.rgb * li;
@@ -667,7 +667,9 @@ Shader "SCRN/Dice"
             float3 col = inCol;
 
             [branch]
+            // glass
             if (matID < 1.0);
+            // dice frame
             else if (matID < 2.0)
             {
                 // poi's matcap code from their toon shadur
@@ -677,6 +679,7 @@ Shader "SCRN/Dice"
                 float4 matcapCol = _Matcap1.Sample(linear_repeat_sampler, matcapUV);
                 col = (matcapCol.rgb * _BorderCol.rgb) * effects * _BorderCol.a;
             }
+            // circles
             else if (matID < 3.0)
             {
                 float4 biOut;
@@ -684,8 +687,9 @@ Shader "SCRN/Dice"
                     pos * _CircleTex1Scale, norm, biOut);
                 biOut *= _CircleCol;
                 float scale = saturate(1.0 - (matID - floor(matID)) / 0.01);
+                float aa = 0.7 * fwidth(scale);
                 col = lerp(col, biOut.rgb * effects,
-                    smoothstep(0.75 - audio2 * 0.25, 1.0 - audio2 * 0.25, scale) * biOut.a);
+                    smoothstep(0.75 - aa - audio2 * 0.25, 1.0 + aa - audio2 * 0.25, scale) * biOut.a);
             }
             return col;
         }
