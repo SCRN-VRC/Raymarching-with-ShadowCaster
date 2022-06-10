@@ -14,9 +14,9 @@ Shader "SCRN/Dice"
         [NoScaleOffset] _TANoiseTex ("Texture Assisted Noise Bilinear", 2D) = "black" {}
         [NoScaleOffset] _TANoiseTexNearest ("Texture Assisted Noise Nearest", 2D) = "black" {}
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
-        [Color] _GlassCol ("Glass Color", Color) = (1, 1, 1, 1)
         [HDR] _CircleCol ("Circle Color", Color) = (1, 1, 1, 1)
         [HDR] _BorderCol ("Border Color", Color) = (1, 1, 1, 1)
+        [HDR] _GlowCol ("Glow Color", Color) = (1, 1, 1, 1)
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
@@ -356,7 +356,6 @@ Shader "SCRN/Dice"
             return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0);
         }
 
-        uniform float4 _GlassCol;
         uniform float _EdgeCut;
         uniform float _EdgeRound;
         uniform float _CloudScale;
@@ -530,7 +529,7 @@ Shader "SCRN/Dice"
 
         float TA_map3( in float3 p )
         {
-            float3 q = p - _CloudOffset;
+            float3 q = p - _CloudOffset * _Time.y;
             float f;
             f  = 0.50000*tanoise3_1d( q ); q = q*2.02;
             f += 0.25000*tanoise3_1d( q ); q = q*2.03;
@@ -577,6 +576,7 @@ Shader "SCRN/Dice"
 
         uniform float4 _CircleCol;
         uniform float4 _BorderCol;
+        uniform float4 _GlowCol;
 
         // https://www.shadertoy.com/view/WsXSDH
         // cheap AO using normals
@@ -600,7 +600,7 @@ Shader "SCRN/Dice"
                 li += 0.1 / (1.0 + d.z * d.z * 300.0);
             }
 
-            return _BorderCol.rgb * li;
+            return _GlowCol.rgb * li;
         }
 
         float3 applyMat(float matID, float3 pos, float3 inCol, float3 effects)
@@ -614,7 +614,8 @@ Shader "SCRN/Dice"
             else if (matID < 3.0)
             {
                 float scale = saturate(1.0 - (matID - floor(matID)) / 0.01);
-                col = _CircleCol * effects;
+                float testWave = (sin(_Time.y * 20.) + 1.0) * 0.5;
+                col = lerp(col, _CircleCol * effects, smoothstep(0.7 - testWave * 0.2, 1.0, scale));
             }
             return col;
         }
@@ -703,7 +704,7 @@ Shader "SCRN/Dice"
             // If there's no shadow pass just do the ray march
             if (DepthTextureExists())
             {
-                marchOuter(mI, 200.0);
+                marchOuter(mI, 100.0);
                 clip(mI.col.a - 0.01);
                 surfacePos = mI.pos;
                 worldPos = mul(unity_ObjectToWorld, float4(surfacePos, 1.0));
@@ -781,11 +782,11 @@ Shader "SCRN/Dice"
 
             // do colors
             float3 glow = diceCheapGlow(surfacePos, mI.rd);
-            marchInner(mI, 48.);
+            marchInner(mI, 64.);
 
             //apply lighting
             mI.col.rgb *= lighting;
-            mI.col.rgb += glow * _BorderCol.a;
+            mI.col.rgb += glow * _GlowCol.a;
 
             outDepth = mI.depth;
 
@@ -824,7 +825,7 @@ Shader "SCRN/Dice"
             mI.matID = 0.0;
             mI.dist = 0.0;
 
-            marchOuter(mI, 200.0);
+            marchOuter(mI, 100.0);
             clip(mI.col.a - 0.01);
             float3 surfacePos = mI.pos;
 
