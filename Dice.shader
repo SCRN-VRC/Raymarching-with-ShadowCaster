@@ -14,15 +14,18 @@ Shader "SCRN/Dice"
         [NoScaleOffset] _TANoiseTex ("Texture Assisted Noise Bilinear", 2D) = "black" {}
         [NoScaleOffset] _TANoiseTexNearest ("Texture Assisted Noise Nearest", 2D) = "black" {}
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
-        [HDR] _CircleCol ("Circle Color", Color) = (1, 1, 1, 1)
-        [HDR] _BorderCol ("Border Color", Color) = (1, 1, 1, 1)
-        [HDR] _GlowCol ("Glow Color", Color) = (1, 1, 1, 1)
+        [NoScaleOffset] _CircleTex1 ("Circles Texture", 2D) = "white" {}
+        [HDR] _CircleCol ("Circle Color", Color) = (3, 3, 3, 1)
+        _CircleTex1Scale ("Texture Scale", Float) = 7
+        [NoScaleOffset] _Matcap1 ("Border Matcap", 2D) = "white" {}
+        [HDR] _BorderCol ("Border Color", Color) = (2.23, 2.23, 2.23, 1)
+        [HDR] _GlowCol ("Glow Color", Color) = (0, 0.62, 1.5, 1)
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         _CloudScale ("Cloud Scale", Range(2, 20)) = 11.0
-        _CloudOffset ("Cloud Offset", Vector) = (2.23, 0.81, 5.03, 0)
-        _CloudIntensity ("Cloud Intensity", Range(0.02, 0.15)) = 0.05
+        _CloudOffset ("Cloud Offset", Vector) = (0.02, 0.01, 0.05, 0)
+        _CloudIntensity ("Cloud Intensity", Range(0.0, 0.1)) = 0.05
         _CloudPuff ("Cloud Puffiness", Range(-0.06, 0.06)) = -0.06
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
     }
@@ -47,6 +50,7 @@ Shader "SCRN/Dice"
         #include "AutoLight.cginc"
         #include "UnityPBSLighting.cginc"
         #include "./tanoise/tanoise.cginc"
+        #include "./AudioLink/AudioLink.cginc"
 
         // real check needed for enabling conservative depth
         // requires Shader Model 5.0
@@ -525,6 +529,64 @@ Shader "SCRN/Dice"
             return worldDir * depth;
         }
 
+        uniform Texture2D<float4> _CircleTex1;
+        uniform float _CircleTex1Scale;
+        uniform float4 _CircleCol;
+        uniform Texture2D<float4> _Matcap1;
+        uniform float4 _BorderCol;
+        uniform float4 _GlowCol;
+
+        uniform float audio1;
+        uniform float audio2;
+
+        SamplerState linear_repeat_sampler;
+
+        // https://github.com/keijiro/BiplanarMapping
+        // Biplanar mapping for color texture
+
+        void Biplanar_float
+            (Texture2D tex, SamplerState samp, float3 wpos, float3 wnrm, out float4 output)
+        {
+            // Coordinate derivatives for texturing
+            float3 p = wpos;
+            float3 n = abs(wnrm);
+            float3 dpdx = ddx(p);
+            float3 dpdy = ddy(p);
+
+            // Major axis (in x; yz are following axis)
+            uint3 ma = (n.x > n.y && n.x > n.z) ? uint3(0, 1, 2) :
+                       (n.y > n.z             ) ? uint3(1, 2, 0) :
+                                                  uint3(2, 0, 1) ;
+
+            // Minor axis (in x; yz are following axis)
+            uint3 mi = (n.x < n.y && n.x < n.z) ? uint3(0, 1, 2) :
+                       (n.y < n.z             ) ? uint3(1, 2, 0) :
+                                                  uint3(2, 0, 1) ;
+
+            // Median axis (in x; yz are following axis)
+            uint3 me = 3 - mi - ma;
+
+            // Project + fetch
+            float4 x = tex.SampleGrad (samp,
+                                            float2(   p[ma.y],    p[ma.z]), 
+                                            float2(dpdx[ma.y], dpdx[ma.z]), 
+                                            float2(dpdy[ma.y], dpdy[ma.z]));
+
+            float4 y = tex.SampleGrad (samp,
+                                            float2(   p[me.y],    p[me.z]), 
+                                            float2(dpdx[me.y], dpdx[me.z]),
+                                            float2(dpdy[me.y], dpdy[me.z]));
+
+            // Blend factors
+            float2 w = float2(n[ma.x], n[me.x]);
+
+            // Make local support
+            w = saturate((w - 0.5773) / (1 - 0.5773));
+
+            // Blending
+            output = (x * w.x + y * w.y) / (w.x + w.y);
+        }
+
         static const float cref = 0.95;
 
         float TA_map3( in float3 p )
@@ -574,10 +636,6 @@ Shader "SCRN/Dice"
             return col;
         }
 
-        uniform float4 _CircleCol;
-        uniform float4 _BorderCol;
-        uniform float4 _GlowCol;
-
         // https://www.shadertoy.com/view/WsXSDH
         // cheap AO using normals
         float diceCheapAO(float3 p, float3 n)
@@ -597,25 +655,37 @@ Shader "SCRN/Dice"
             for (float i = 0; i < 3; i++)
             {
                 float3 d = mapDice(p + rd * -0.05 * i);
-                li += 0.1 / (1.0 + d.z * d.z * 300.0);
+                li += 0.1 / (1.0 + d.z * d.z * (300.0 - 150.0 * audio1));
             }
 
             return _GlowCol.rgb * li;
         }
 
-        float3 applyMat(float matID, float3 pos, float3 inCol, float3 effects)
+        float3 applyMat(float matID, float3 pos, float3 viewDir,
+            float3 norm, float3 inCol, float3 effects)
         {
             float3 col = inCol;
+
+            [branch]
             if (matID < 1.0);
             else if (matID < 2.0)
             {
-                col = _BorderCol * effects;
+                // poi's matcap code from their toon shadur
+                float3 worldViewUp = normalize(float3(0, 1, 0) - viewDir * dot(viewDir, float3(0, 1, 0)));
+                float3 worldViewRight = normalize(cross(viewDir, worldViewUp));
+                float2 matcapUV = float2(dot(worldViewRight, norm), dot(worldViewUp,norm)) * 0.5 + 0.5;
+                float4 matcapCol = _Matcap1.Sample(linear_repeat_sampler, matcapUV);
+                col = (matcapCol.rgb * _BorderCol.rgb) * effects * _BorderCol.a;
             }
             else if (matID < 3.0)
             {
+                float4 biOut;
+                Biplanar_float(_CircleTex1, linear_repeat_sampler,
+                    pos * _CircleTex1Scale, norm, biOut);
+                biOut *= _CircleCol;
                 float scale = saturate(1.0 - (matID - floor(matID)) / 0.01);
-                float testWave = (sin(_Time.y * 20.) + 1.0) * 0.5;
-                col = lerp(col, _CircleCol * effects, smoothstep(0.7 - testWave * 0.2, 1.0, scale));
+                col = lerp(col, biOut.rgb * effects,
+                    smoothstep(0.75 - audio2 * 0.25, 1.0 - audio2 * 0.25, scale) * biOut.a);
             }
             return col;
         }
@@ -632,14 +702,14 @@ Shader "SCRN/Dice"
             float3 refr = refract(mI.rd, n, cref);
 
             // march into the back of the dice
-            mI.ro = mI.ro + refr * 2.0;
+            mI.ro = mI.ro + refr;
             mI.rd = -refr;
             marchOuter(mI, 16.0);
 
             float3 nout = diceNorm(mI.pos);
             float dout = mI.dist;
             
-            dout = 2.0 - dout;
+            dout = 0.95 - dout;
             float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps);
 
             // If want the normal in the opposite direction we are inside not outside
@@ -657,13 +727,13 @@ Shader "SCRN/Dice"
             float ao = diceCheapAO(iniPos, n);
 
             float3 colInner = refProbe(reflWorldPos, refrOut);
-            colInner = applyMat(mI.matID, mI.pos, colInner, ao * (1. - c.a));
+            colInner = applyMat(mI.matID, mI.pos, mI.rd, mI.norm, colInner, ao * (1. - c.a));
 
             col = lerp(colInner, c.rgb, c.a);
 
             // outside
             col += refProbe(iniWorldPos, refl) * fresnel * ao;
-            col = applyMat(iniMat, iniPos, col, ao);
+            col = applyMat(iniMat, iniPos, iniDir, n, col, ao);
 
             mI.col = float4(col, 1.0);
         }
@@ -781,7 +851,14 @@ Shader "SCRN/Dice"
         #endif // UNITY_SHOULD_SAMPLE_SH
 
             // do colors
+
+            // audiolink
+            //audio1 = (sin(_Time.y * 10) + 1.0) * 0.5;
+            audio1 = AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 0 ) ).r;
+            audio2 = AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 3 ) ).r;
+
             float3 glow = diceCheapGlow(surfacePos, mI.rd);
+            glow.rgb = glow.rgb * (1.0 + audio1);
             marchInner(mI, 64.);
 
             //apply lighting
