@@ -42,7 +42,8 @@ Material:
     - _EdgeRound: 0.712
     - _Smoothness: 0.9
     m_Colors:
-    - _CircleCol: {r: 1.672498, g: 1.672498, b: 1.672498, a: 1}
-    - _CloudOffset: {r: 0, g: 0, b: 0, a: 0}
+    - _BorderCol: {r: 0.03202963, g: 1.228127, b: 3.0588238, a: 1}
+    - _CircleCol: {r: 1.1096008, g: 4.2870936, b: 0, a: 1}
+    - _CloudOffset: {r: 2.23, g: 0.81, b: 5.03, a: 0}
     - _GlassCol: {r: 1, g: 1, b: 1, a: 1}
-    - _Test: {r: 1, g: 54.54, b: 19.3, a: 0}
+    - _Test: {r: -0.05, g: 0, b: 0, a: 0}

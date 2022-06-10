@@ -16,11 +16,12 @@ Shader "SCRN/Dice"
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
         [Color] _GlassCol ("Glass Color", Color) = (1, 1, 1, 1)
         [HDR] _CircleCol ("Circle Color", Color) = (1, 1, 1, 1)
+        [HDR] _BorderCol ("Border Color", Color) = (1, 1, 1, 1)
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         _CloudScale ("Cloud Scale", Range(2, 20)) = 11.0
-        _CloudOffset ("Cloud Offset", Vector) = (0, 0, 0, 0)
+        _CloudOffset ("Cloud Offset", Vector) = (2.23, 0.81, 5.03, 0)
         _CloudIntensity ("Cloud Intensity", Range(0.02, 0.15)) = 0.05
         _CloudPuff ("Cloud Puffiness", Range(-0.06, 0.06)) = -0.06
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
@@ -33,6 +34,7 @@ Shader "SCRN/Dice"
         // not needed for rendering, you only ever see the front of the quad
         // but this makes Unity's scene selection allow for back face selection
         Cull Off
+        Blend SrcAlpha OneMinusSrcAlpha
 
         CGINCLUDE
         // should make shadow receiving work on mobile
@@ -76,7 +78,6 @@ Shader "SCRN/Dice"
             float3 rd;
             float3 pos;
             float3 norm;
-            float3 lDir;
             float4 col;
             float depth;
             float matID;
@@ -365,8 +366,16 @@ Shader "SCRN/Dice"
 
         uniform float4 _Test;
 
-        // distance function of the outside
-        float2 mapDice(float3 p)
+        /*
+            out:
+            x - distance of entire sdf
+            y - material ID
+                0 - default glass
+                1 - glowing border
+                2 - glowing circles
+            z - distance to glowing stuff
+        */
+        float3 mapDice(float3 p)
         {
             float s = sdOctahedron(p, _EdgeRound);
             float c = box(p, 0.29.xxx);
@@ -400,10 +409,11 @@ Shader "SCRN/Dice"
             dice = min(dice, ccut);
 
             float matID = 0.0;
+            float light = ccut * 5.0;
             matID = dice == ccut ? 1.0 : matID;
 
             //short circuting for better performance
-            if (dice > 0.01) return float2(dice, matID);
+            if (dice > 0.01) return float3(dice, matID, light);
 
             float d = sphere(p + dips[0], dipsR[0]);
             for (int i = 1; i < 21; i++) {
@@ -415,7 +425,7 @@ Shader "SCRN/Dice"
             matID = dc < 0.01 ? 2.0 : matID;
             matID += dc < 0.01 ? dc : 0.0; // store intensity
 
-            return float2(dice, matID);
+            return float3(dice, matID, light);
         }
 
         // faster 4 tap normals
@@ -428,43 +438,6 @@ Shader "SCRN/Dice"
                 e.xxx*mapDice(p+e.xxx).x);
         }
 
-        // https://www.shadertoy.com/view/WsXSDH
-        // cheap AO using normals
-        float diceCheapAO(float3 p, float3 n)
-        {
-            float a = .5+.5*mapDice(p+n*.04)/.05;
-            a *= .6+.4*mapDice(p+n*.08)/.1;
-            a *= .7+.3*mapDice(p+n*.16)/.2;
-            return saturate(a * a);
-        }
-
-        static const float cref = 0.95;
-
-        float TA_map3( in float3 p )
-        {
-            float3 q = p - _CloudOffset;
-            float f;
-            f  = 0.50000*tanoise3_1d( q ); q = q*2.02;
-            f += 0.25000*tanoise3_1d( q ); q = q*2.03;
-            f += 0.12500*tanoise3_1d( q );
-            return f;
-        }
-
-        float mapClouds(in float3 p)
-        {
-            return TA_map3(p);
-        }
-
-        // faster 4 tap normals
-        float3 cloudNorm( in float3 p ){
-            const float2 e = float2(0.01, -0.01);
-            return normalize(
-                e.xyy*mapClouds(p+e.xyy) +
-                e.yyx*mapClouds(p+e.yyx) +
-                e.yxy*mapClouds(p+e.yxy) +
-                e.xxx*mapClouds(p+e.xxx));
-        }
-
         void marchOuter(inout marchInOut mI, float max_steps)
         {
             float3 p = mI.ro;
@@ -473,7 +446,7 @@ Shader "SCRN/Dice"
             bool hit = false;
             
             for (float i = 0.; i < max_steps; i++) {
-                float2 d = mapDice(p);
+                float3 d = mapDice(p);
                 // more detail the closer
                 if (d.x < (0.001 * (t + 1.0))) {
                     hit = true;
@@ -488,85 +461,6 @@ Shader "SCRN/Dice"
             mI.pos = p;
             mI.col.a = hit ? 1.0 : 0.0;
             mI.dist = t;
-        }
-
-        // from Guil https://www.shadertoy.com/view/MtX3Ws
-        float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs)
-        {
-            const float dt = .02;
-            float t = mind;
-            float4 col= 0..xxxx;
-            float c = 0.;
-            for( float i = 0.; i < maxs; i++ )
-            {
-                t+=dt*exp(-2.*c);
-                if( t > maxd || col.a >= 1.0) break;
-                float3 pos = ro+t*rd;
-                
-                c = mapClouds(pos);
-                
-                rd = normalize(lerp(rd, -cloudNorm(pos), _CloudPuff));  // Little refraction effect
-                
-                col = 0.99*col + _CloudIntensity * float4(c*c*c, c*c, c, c);
-            }    
-            return col;
-        }
-
-        uniform float3 _CircleCol;
-
-        float3 applyMat(float matID, float3 pos, float3 inCol)
-        {
-            float3 col = inCol;
-            if (matID < 1.0);
-            else if (matID < 2.0) col = float3(0.1, 0.1, 2.0);
-            else if (matID < 3.0)
-            {
-                float scale = saturate(1.0 - (matID - floor(matID)) / 0.01);
-                col *= _CircleCol;
-            }
-            return col;
-        }
-
-        void marchInner(inout marchInOut mI, float max_steps)
-        {
-            float3 col = mI.col.rgb;
-            float3 iniPos = mI.ro;
-            float3 iniDir = mI.rd;
-            float3 n = mI.norm;
-            float iniMat = mI.matID;
-
-            float3 refl = reflect(mI.rd, n);
-            float3 refr = refract(mI.rd, n, cref);
-
-            mI.ro = mI.ro + refr * 2.0;
-            mI.rd = -refr;
-            marchOuter(mI, 16.0);
-
-            float3 nout = diceNorm(mI.pos);
-            float dout = mI.dist;
-            
-            dout = 2.0 - dout;
-            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps);
-
-            // If want the normal in the opposite direction we are inside not outside
-            nout *= -1.;
-            // Dirty trick to avoid refract returning a zero floattor when nornal and floattor are almost perpendicular and eta bigger than 1.
-            float3 refrOut = refract(refr, nout, lerp(1. / cref, 1., smoothstep(0.35, 0.20, dot(refr, -nout))));
-            
-            float3 iniWorldPos = mul(unity_ObjectToWorld, float4(iniPos, 1.0));
-            float3 reflWorldPos = mul(unity_ObjectToWorld, float4(mI.pos, 1.0));
-
-            // do colors
-            float3 colInner = refProbe(reflWorldPos, refrOut);
-            colInner = applyMat(mI.matID, mI.pos, colInner);
-
-            col = lerp(colInner, c.rgb, c.a);
-
-            float fresnel = 1.0 - pow(dot(n, -iniDir), 2);
-            col += refProbe(iniWorldPos, refl) * fresnel * diceCheapAO(iniPos, n);
-            col = applyMat(iniMat, iniPos, col);
-
-            mI.col.rgb = col;
         }
 
         #if defined(UNITY_PASS_FORWARDBASE) || defined(UNITY_PASS_FORWARDADD)
@@ -632,6 +526,147 @@ Shader "SCRN/Dice"
             return worldDir * depth;
         }
 
+        static const float cref = 0.95;
+
+        float TA_map3( in float3 p )
+        {
+            float3 q = p - _CloudOffset;
+            float f;
+            f  = 0.50000*tanoise3_1d( q ); q = q*2.02;
+            f += 0.25000*tanoise3_1d( q ); q = q*2.03;
+            f += 0.12500*tanoise3_1d( q );
+            return f;
+        }
+
+        float mapClouds(in float3 p)
+        {
+            return TA_map3(p);
+        }
+
+        // faster 4 tap normals
+        float3 cloudNorm( in float3 p ){
+            const float2 e = float2(0.01, -0.01);
+            return normalize(
+                e.xyy*mapClouds(p+e.xyy) +
+                e.yyx*mapClouds(p+e.yyx) +
+                e.yxy*mapClouds(p+e.yxy) +
+                e.xxx*mapClouds(p+e.xxx));
+        }
+
+        // from Guil https://www.shadertoy.com/view/MtX3Ws
+        float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs)
+        {
+            const float dt = .02;
+            float t = mind;
+            float4 col= 0..xxxx;
+            float c = 0.;
+            for( float i = 0.; i < maxs; i++ )
+            {
+                t+=dt*exp(-2.*c);
+                if( t > maxd || col.a >= 1.0) break;
+                float3 pos = ro+t*rd;
+                
+                c = mapClouds(pos);
+                
+                rd = normalize(lerp(rd, -cloudNorm(pos), _CloudPuff));  // Little refraction effect
+                
+                col = 0.99*col + _CloudIntensity * float4(c*c*c, c*c, c, c);
+            }    
+            return col;
+        }
+
+        uniform float4 _CircleCol;
+        uniform float4 _BorderCol;
+
+        // https://www.shadertoy.com/view/WsXSDH
+        // cheap AO using normals
+        float diceCheapAO(float3 p, float3 n)
+        {
+            float a = .5+.5*mapDice(p+n*.04).x/.05;
+            a *= .6+.4*mapDice(p+n*.08).x/.1;
+            a *= .7+.3*mapDice(p+n*.16).x/.2;
+            return saturate(a * a);
+        }
+
+        // same idea for the AO
+        // since we know where the surface is,
+        // just sample from the surface back to the origin for a nice, cheap glow effect
+        float3 diceCheapGlow(float3 p, float3 rd)
+        {
+            float li = 0.0;
+            for (float i = 0; i < 3; i++)
+            {
+                float3 d = mapDice(p + rd * -0.05 * i);
+                li += 0.1 / (1.0 + d.z * d.z * 300.0);
+            }
+
+            return _BorderCol.rgb * li;
+        }
+
+        float3 applyMat(float matID, float3 pos, float3 inCol, float3 effects)
+        {
+            float3 col = inCol;
+            if (matID < 1.0);
+            else if (matID < 2.0)
+            {
+                col = _BorderCol * effects;
+            }
+            else if (matID < 3.0)
+            {
+                float scale = saturate(1.0 - (matID - floor(matID)) / 0.01);
+                col = _CircleCol * effects;
+            }
+            return col;
+        }
+
+        void marchInner(inout marchInOut mI, float max_steps)
+        {
+            float3 col = mI.col.rgb;
+            float3 iniPos = mI.ro;
+            float3 iniDir = mI.rd;
+            float3 n = mI.norm;
+            float iniMat = mI.matID;
+
+            float3 refl = reflect(mI.rd, n);
+            float3 refr = refract(mI.rd, n, cref);
+
+            // march into the back of the dice
+            mI.ro = mI.ro + refr * 2.0;
+            mI.rd = -refr;
+            marchOuter(mI, 16.0);
+
+            float3 nout = diceNorm(mI.pos);
+            float dout = mI.dist;
+            
+            dout = 2.0 - dout;
+            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps);
+
+            // If want the normal in the opposite direction we are inside not outside
+            nout *= -1.;
+            // Dirty trick to avoid refract returning a zero floattor when nornal and floattor are almost perpendicular and eta bigger than 1.
+            float3 refrOut = refract(refr, nout, lerp(1. / cref, 1., smoothstep(0.35, 0.20, dot(refr, -nout))));
+            
+            float3 iniWorldPos = mul(unity_ObjectToWorld, float4(iniPos, 1.0));
+            float3 reflWorldPos = mul(unity_ObjectToWorld, float4(mI.pos, 1.0));
+
+            // do colors
+
+            // inside
+            float fresnel = 1.0 - pow(dot(n, -iniDir), 2);
+            float ao = diceCheapAO(iniPos, n);
+
+            float3 colInner = refProbe(reflWorldPos, refrOut);
+            colInner = applyMat(mI.matID, mI.pos, colInner, ao * (1. - c.a));
+
+            col = lerp(colInner, c.rgb, c.a);
+
+            // outside
+            col += refProbe(iniWorldPos, refl) * fresnel * ao;
+            col = applyMat(iniMat, iniPos, col, ao);
+
+            mI.col = float4(col, 1.0);
+        }
+
         // reuse the fragment shader for both forward base and forward add passes
         fixed4 frag_forward (v2f i
     #if defined(USE_CONSERVATIVE_DEPTH)
@@ -654,7 +689,6 @@ Shader "SCRN/Dice"
             mI.rd = i.rd;
             mI.pos = float3(0., 0., 0.);
             mI.norm = float3(0., 1., 0.);
-            mI.lDir = float3(0., 1., 0.);
             mI.col = float4(1., 1., 1., 1.);
             mI.depth = 0.0;
             mI.matID = 0.0;
@@ -691,7 +725,7 @@ Shader "SCRN/Dice"
                 worldPos += UNITY_MATRIX_I_V._14_24_34;
                 clipPos = UnityWorldToClipPos(worldPos);
                 surfacePos = mul(unity_WorldToObject, float4(worldPos, 1.0));
-                float2 dist = mapDice(surfacePos);
+                float3 dist = mapDice(surfacePos);
                 mI.matID = dist.y;
                 if (dist.x > 0.002 * distance(worldPos1, UNITY_MATRIX_I_V._14_24_34)) discard;
             }
@@ -746,10 +780,12 @@ Shader "SCRN/Dice"
         #endif // UNITY_SHOULD_SAMPLE_SH
 
             // do colors
+            float3 glow = diceCheapGlow(surfacePos, mI.rd);
             marchInner(mI, 48.);
 
             //apply lighting
             mI.col.rgb *= lighting;
+            mI.col.rgb += glow * _BorderCol.a;
 
             outDepth = mI.depth;
 
@@ -783,7 +819,6 @@ Shader "SCRN/Dice"
             mI.rd = i.rd;
             mI.pos = float3(0., 0., 0.);
             mI.norm = float3(0., 1., 0.);
-            mI.lDir = float3(0., 1., 0.);
             mI.col = float4(1., 1., 1., 1.);
             mI.depth = 0.0;
             mI.matID = 0.0;
