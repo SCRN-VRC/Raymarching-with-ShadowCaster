@@ -27,7 +27,7 @@ Shader "SCRN/Dice"
         _CloudScale ("Cloud Scale", Range(2, 20)) = 11.0
         _CloudOffset ("Cloud Offset", Vector) = (0.02, 0.01, 0.05, 0)
         _CloudIntensity ("Cloud Intensity", Range(0.0, 0.1)) = 0.05
-        _CloudPuff ("Cloud Puffiness", Range(-0.06, 0.06)) = -0.02
+        _CloudRefract ("Cloud Refract", Range(-0.06, 0.06)) = -0.02
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
     }
     SubShader
@@ -535,7 +535,7 @@ Shader "SCRN/Dice"
 
         uniform float _CloudScale;
         uniform float _CloudIntensity;
-        uniform float _CloudPuff;
+        uniform float _CloudRefract;
         uniform float3 _CloudOffset;
         uniform float4 _ShadowCol;
 
@@ -621,9 +621,9 @@ Shader "SCRN/Dice"
 
         // from Guil https://www.shadertoy.com/view/MtX3Ws
         float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs,
-            float3 lighting, float3 worldLightDir)
+            UnityLight light)
         {
-            const float dt = .02;
+            const float dt = .025;
             float t = mind;
             float4 col= 0..xxxx;
             float c = 0.;
@@ -636,27 +636,30 @@ Shader "SCRN/Dice"
                 if( t > maxd || col.a >= 1.0) break;
                 float3 pos = ro+t*rd;
                 c = mapClouds(pos);
-                rd = normalize(lerp(rd, -cloudNorm(pos), _CloudPuff));  // Little refraction effect
+                rd = normalize(lerp(rd, -cloudNorm(pos), _CloudRefract));  // Little refraction effect
                 
-                // sun direction
-                float dif = saturate((c - mapClouds(pos+0.1*worldLightDir))/0.6);
+                // compare cloud density in direction of light
+                float dif = saturate((c - mapClouds(pos+0.1*light.dir))/0.6);
                 
                 // get how far the bottom of the cloud is away from the center
                 float3 cloudWorld = mul(unity_ObjectToWorld, float4(pos, 1.0));
                 float cloudHeight = (cloudWorld.y - objWorldCenter.y) > 0.0 ? objWorldCenter.y : cloudWorld.y;
                 float noise = tanoise2(pos.xz * 4.3) * 0.4;
-                cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) + noise) * 0.58, 0.5);
+                cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) + noise) * 0.17, 0.5);
 
                 // Fake shadows
-                float mixBottomShadow = dot(worldLightDir, float3(0, 1, 0));
+                float mixBottomShadow = dot(light.dir, float3(0, 1, 0));
                 mixBottomShadow = saturate((mixBottomShadow * 0.5 + 0.5)) * 
-                    pow(saturate(cloudHeight - 0.1), 2);
+                    pow(saturate(cloudHeight + 0.37), 2);
 
-                float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + lighting * dif * 0.2;
+                float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + light.color * dif * 0.2;
                 lin = lerp(lin, _ShadowCol.rgb, mixBottomShadow * _ShadowCol.a);
 
                 col = 0.99*col + float4(lin, c * _CloudIntensity);
-            }    
+            }
+            // sun flare
+            float sun = saturate(dot(light.dir, -rd));
+            col.rgb += float3(1.0,0.4,0.2) * light.color * (pow(sun, 3.0) * 0.3);
             return col;
         }
 
@@ -719,7 +722,7 @@ Shader "SCRN/Dice"
             return col;
         }
 
-        void marchInner(inout marchInOut mI, float3 lighting, float3 worldLightDir, float max_steps)
+        void marchInner(inout marchInOut mI, UnityLight light, inout float3 indirectSpec, float max_steps)
         {
             float3 col = mI.col.rgb;
             float3 iniPos = mI.ro;
@@ -739,7 +742,7 @@ Shader "SCRN/Dice"
             float dout = mI.dist;
             
             dout = 0.9 - dout;
-            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps, lighting, worldLightDir);
+            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps, light);
 
             // If want the normal in the opposite direction we are inside not outside
             nout *= -1.;
@@ -761,11 +764,14 @@ Shader "SCRN/Dice"
             col = lerp(colInner, c.rgb, c.a);
 
             // outside
-            col += refProbe(iniWorldPos, refl) * fresnel * ao;
+            indirectSpec = refProbe(iniWorldPos, refl) * fresnel * ao;
+            //col += indirectSpec;
             col = applyMat(iniMat, iniPos, iniDir, n, col, ao);
 
             mI.col = float4(col, 1.0);
             mI.matID = iniMat;
+            mI.rd = iniDir;
+            mI.norm = n;
         }
 
         // reuse the fragment shader for both forward base and forward add passes
@@ -819,16 +825,14 @@ Shader "SCRN/Dice"
                 float4 screenPos = UnityObjectToClipPos(i.modelPos);
                 float2 offset = 1.2 / _ScreenParams.xy * screenPos.w; 
 
-                worldPos = calculateWorldSpace(screenPos);
-                float3 worldPos1 = worldPos;
+                worldPos = calculateWorldSpace(screenPos) + UNITY_MATRIX_I_V._14_24_34;
 
                 // check the SDF to discard other geometry based on view distance
-                worldPos += UNITY_MATRIX_I_V._14_24_34;
                 clipPos = UnityWorldToClipPos(worldPos);
                 surfacePos = mul(unity_WorldToObject, float4(worldPos, 1.0));
                 float3 dist = mapDice(surfacePos);
                 mI.matID = dist.y;
-                if (dist.x > 0.002 * distance(worldPos1, UNITY_MATRIX_I_V._14_24_34)) discard;
+                if (dist.x > 0.0015 * (1.0 + distance(worldPos, UNITY_MATRIX_I_V._14_24_34))) discard;
             }
 
             normal = diceNorm(surfacePos);
@@ -855,7 +859,7 @@ Shader "SCRN/Dice"
 
             // basic lighting
             float3 worldNormal = UnityObjectToWorldNormal(normal);
-            float3 worldLightDir = UnityWorldSpaceLightDir(worldPos);
+            float3 worldLightDir = normalize(UnityWorldSpaceLightDir(worldPos));
             float ndotl = saturate(dot(worldNormal, worldLightDir));
 
             // get shadow, attenuation, and cookie
@@ -863,11 +867,6 @@ Shader "SCRN/Dice"
 
             // per pixel lighting
             float3 lighting = _LightColor0 * ndotl * atten;
-
-        #if defined(UNITY_SHOULD_SAMPLE_SH)
-            // ambient lighting
-            float3 ambient = ShadeSH9(float4(worldNormal, 1));
-            lighting += ambient;
 
         #if defined(VERTEXLIGHT_ON)
             // "per vertex" non-important lights
@@ -878,21 +877,53 @@ Shader "SCRN/Dice"
 
             lighting += vertexLighting;
         #endif // VERTEXLIGHT_ON
-        #endif // UNITY_SHOULD_SAMPLE_SH
-
-            // do colors
 
             // audiolink
             //audio1 = (sin(_Time.y * 10) + 1.0) * 0.5;
             audio1 = AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 0 ) ).r;
-            audio2 = saturate(AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 2 ) ).r * 2.0);
+            audio2 = AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 2 ) ).r * 2.0;
+
+            UnityLight light;
+            light.color = lighting;
+            light.dir = worldLightDir;
+
+            float3 indirectSpec;
+            marchInner(mI, light, indirectSpec, 64.);
+
+            //apply lighting
+
+            float3 specularTint;
+            float oneMinusReflectivity;
+            float smoothness = _Smoothness;
+            float metallic = (mI.matID == 1.0) ? 0.5 : 0.1;
+            float3 albedo = DiffuseAndSpecularFromMetallic(
+                mI.col.rgb, metallic, specularTint, oneMinusReflectivity
+            );
+
+            UnityIndirect indirectLight;
+        #ifdef UNITY_PASS_FORWARDADD
+            indirectLight.diffuse = indirectLight.specular = 0;
+        #else
+            indirectLight.diffuse = max(0, ShadeSH9(float4(worldNormal, 1)));
+            float3 reflectionDir = reflect(-mI.rd, mI.norm);
+            // Unity_GlossyEnvironmentData envData;
+            // envData.roughness = 1 - smoothness;
+            // envData.reflUVW = reflectionDir;
+            // indirectLight.specular = Unity_GlossyEnvironment(
+            //     UNITY_PASS_TEXCUBE(unity_SpecCube0), unity_SpecCube0_HDR, envData
+            // );
+            indirectLight.specular = indirectSpec;
+        #endif
+
+            mI.col.rgb = UNITY_BRDF_PBS(
+                albedo, specularTint,
+                oneMinusReflectivity, smoothness,
+                mI.norm, -mI.rd,
+                light, indirectLight
+            );
 
             float3 glow = diceCheapGlow(surfacePos, mI.rd);
             glow.rgb = glow.rgb * (1.0 + audio1);
-            marchInner(mI, lighting, worldLightDir, 64.);
-
-            //apply lighting
-            mI.col.rgb *= lighting;
             mI.col.rgb += glow * _GlowCol.a * ((mI.matID == 1.0) ? 0.2 : 1.0);
 
             outDepth = mI.depth;
