@@ -19,14 +19,15 @@ Shader "SCRN/Dice"
         _CircleTex1Scale ("Texture Scale", Float) = 7
         [NoScaleOffset] _Matcap1 ("Border Matcap", 2D) = "white" {}
         [HDR] _BorderCol ("Border Color", Color) = (2.23, 2.23, 2.23, 1)
-        [HDR] _GlowCol ("Glow Color", Color) = (0, 1.1, 2.3, 1)
+        [HDR] _GlowCol ("Glow Color", Color) = (0, 1.44, 3.0, 1)
+        [HDR] _ShadowCol ("Shadow Color", Color) = (0, 0, 0, 1)
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         _CloudScale ("Cloud Scale", Range(2, 20)) = 11.0
         _CloudOffset ("Cloud Offset", Vector) = (0.02, 0.01, 0.05, 0)
         _CloudIntensity ("Cloud Intensity", Range(0.0, 0.1)) = 0.05
-        _CloudPuff ("Cloud Puffiness", Range(-0.06, 0.06)) = -0.06
+        _CloudPuff ("Cloud Puffiness", Range(-0.06, 0.06)) = -0.02
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
     }
     SubShader
@@ -362,10 +363,6 @@ Shader "SCRN/Dice"
 
         uniform float _EdgeCut;
         uniform float _EdgeRound;
-        uniform float _CloudScale;
-        uniform float _CloudIntensity;
-        uniform float _CloudPuff;
-        uniform float3 _CloudOffset;
 
         uniform float4 _Test;
 
@@ -536,6 +533,12 @@ Shader "SCRN/Dice"
         uniform float4 _BorderCol;
         uniform float4 _GlowCol;
 
+        uniform float _CloudScale;
+        uniform float _CloudIntensity;
+        uniform float _CloudPuff;
+        uniform float3 _CloudOffset;
+        uniform float4 _ShadowCol;
+
         uniform float audio1;
         uniform float audio2;
 
@@ -589,6 +592,8 @@ Shader "SCRN/Dice"
 
         static const float cref = 0.95;
 
+        // Texture assisted noise
+        // https://github.com/cnlohr/shadertrixx/tree/main/Assets/cnlohr/Shaders/tanoise
         float TA_map3( in float3 p )
         {
             float3 q = p - _CloudOffset * _Time.y;
@@ -596,7 +601,7 @@ Shader "SCRN/Dice"
             f  = 0.50000*tanoise3_1d( q ); q = q*2.02;
             f += 0.25000*tanoise3_1d( q ); q = q*2.03;
             f += 0.12500*tanoise3_1d( q );
-            return f;
+            return f * 1.5;
         }
 
         float mapClouds(in float3 p)
@@ -615,23 +620,42 @@ Shader "SCRN/Dice"
         }
 
         // from Guil https://www.shadertoy.com/view/MtX3Ws
-        float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs)
+        float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs,
+            float3 lighting, float3 worldLightDir)
         {
             const float dt = .02;
             float t = mind;
             float4 col= 0..xxxx;
             float c = 0.;
+
+            float3 objWorldCenter = mul(unity_ObjectToWorld, float4(0..xxx, 1.0));
+
             for( float i = 0.; i < maxs; i++ )
             {
                 t+=dt*exp(-2.*c);
                 if( t > maxd || col.a >= 1.0) break;
                 float3 pos = ro+t*rd;
-                
                 c = mapClouds(pos);
-                
                 rd = normalize(lerp(rd, -cloudNorm(pos), _CloudPuff));  // Little refraction effect
                 
-                col = 0.99*col + _CloudIntensity * float4(c*c*c, c*c, c, c);
+                // sun direction
+                float dif = saturate((c - mapClouds(pos+0.1*worldLightDir))/0.6);
+                
+                // get how far the bottom of the cloud is away from the center
+                float3 cloudWorld = mul(unity_ObjectToWorld, float4(pos, 1.0));
+                float cloudHeight = (cloudWorld.y - objWorldCenter.y) > 0.0 ? objWorldCenter.y : cloudWorld.y;
+                float noise = tanoise2(pos.xz * 4.3) * 0.4;
+                cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) + noise) * 0.58, 0.5);
+
+                // Fake shadows
+                float mixBottomShadow = dot(worldLightDir, float3(0, 1, 0));
+                mixBottomShadow = saturate((mixBottomShadow * 0.5 + 0.5)) * 
+                    pow(saturate(cloudHeight - 0.1), 2);
+
+                float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + lighting * dif * 0.2;
+                lin = lerp(lin, _ShadowCol.rgb, mixBottomShadow * _ShadowCol.a);
+
+                col = 0.99*col + float4(lin, c * _CloudIntensity);
             }    
             return col;
         }
@@ -654,7 +678,7 @@ Shader "SCRN/Dice"
             float li = 0.0;
             for (float i = 0; i < 3; i++)
             {
-                float3 d = mapDice(p + rd * -0.05 * i);
+                float3 d = mapDice(p + rd * (-0.05 * i));
                 li += 0.1 / (1.0 + d.z * d.z * (300.0 - 50.0 * audio1));
             }
 
@@ -683,6 +707,7 @@ Shader "SCRN/Dice"
             else if (matID < 3.0)
             {
                 float4 biOut;
+                // biplanar mapping
                 Biplanar_float(_CircleTex1, linear_repeat_sampler,
                     pos * _CircleTex1Scale, norm, biOut);
                 biOut *= _CircleCol;
@@ -694,7 +719,7 @@ Shader "SCRN/Dice"
             return col;
         }
 
-        void marchInner(inout marchInOut mI, float max_steps)
+        void marchInner(inout marchInOut mI, float3 lighting, float3 worldLightDir, float max_steps)
         {
             float3 col = mI.col.rgb;
             float3 iniPos = mI.ro;
@@ -713,8 +738,8 @@ Shader "SCRN/Dice"
             float3 nout = diceNorm(mI.pos);
             float dout = mI.dist;
             
-            dout = 0.95 - dout;
-            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps);
+            dout = 0.9 - dout;
+            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps, lighting, worldLightDir);
 
             // If want the normal in the opposite direction we are inside not outside
             nout *= -1.;
@@ -740,6 +765,7 @@ Shader "SCRN/Dice"
             col = applyMat(iniMat, iniPos, iniDir, n, col, ao);
 
             mI.col = float4(col, 1.0);
+            mI.matID = iniMat;
         }
 
         // reuse the fragment shader for both forward base and forward add passes
@@ -859,15 +885,15 @@ Shader "SCRN/Dice"
             // audiolink
             //audio1 = (sin(_Time.y * 10) + 1.0) * 0.5;
             audio1 = AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 0 ) ).r;
-            audio2 = AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 3 ) ).r;
+            audio2 = saturate(AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 2 ) ).r * 2.0);
 
             float3 glow = diceCheapGlow(surfacePos, mI.rd);
             glow.rgb = glow.rgb * (1.0 + audio1);
-            marchInner(mI, 64.);
+            marchInner(mI, lighting, worldLightDir, 64.);
 
             //apply lighting
             mI.col.rgb *= lighting;
-            mI.col.rgb += glow * _GlowCol.a;
+            mI.col.rgb += glow * _GlowCol.a * ((mI.matID == 1.0) ? 0.2 : 1.0);
 
             outDepth = mI.depth;
 

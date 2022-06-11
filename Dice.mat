@@ -20,15 +20,11 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _CircleTex1:
-        m_Texture: {fileID: 2800000, guid: 5e54fd3fa7d2eb2448d1afc2697bf8a4, type: 3}
+        m_Texture: {fileID: 2800000, guid: 962e3e241bcdba4408210cb262c13358, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _CubeTex:
         m_Texture: {fileID: 8900000, guid: 63ba39e2cf7829f4e90963cb7593468c, type: 3}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    - _DecorTex1:
-        m_Texture: {fileID: 2800000, guid: 81515002c3860be4f915641814f9b491, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Matcap1:
@@ -44,17 +40,17 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Floats:
-    - _CircleTex1Scale: 7.12
+    - _CircleTex1Scale: 7
     - _CloudIntensity: 0.05
-    - _CloudPuff: -0.06
+    - _CloudPuff: -0.02
     - _CloudScale: 11
-    - _DecorTex1Scale: 16.05
     - _EdgeCut: 0.781
     - _EdgeRound: 0.712
     - _Smoothness: 0.9
     m_Colors:
-    - _BorderCol: {r: 2.297397, g: 2.297397, b: 2.297397, a: 1}
-    - _CircleCol: {r: 2.9960785, g: 2.9960785, b: 2.9960785, a: 1}
+    - _BorderCol: {r: 2.23, g: 2.23, b: 2.23, a: 1}
+    - _CircleCol: {r: 3, g: 3, b: 3, a: 1}
     - _CloudOffset: {r: 0.02, g: 0.01, b: 0.05, a: 0}
-    - _GlowCol: {r: 0, g: 1.1334226, b: 2.6082377, a: 1}
-    - _Test: {r: 0.5, g: 0, b: 0, a: 0}
+    - _GlowCol: {r: 0, g: 1.44, b: 3, a: 1}
+    - _ShadowCol: {r: 0, g: 0, b: 0, a: 1}
+    - _Test: {r: 0, g: 0, b: 0, a: 0}
