@@ -11,24 +11,29 @@ Shader "SCRN/Dice"
 {
     Properties
     {
-        [NoScaleOffset] _TANoiseTex ("Texture Assisted Noise Bilinear", 2D) = "black" {}
-        [NoScaleOffset] _TANoiseTexNearest ("Texture Assisted Noise Nearest", 2D) = "black" {}
-        [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
-        [NoScaleOffset] _CircleTex1 ("Circles Texture", 2D) = "white" {}
-        [HDR] _CircleCol ("Circle Color", Color) = (3, 3, 3, 1)
-        _CircleTex1Scale ("Texture Scale", Float) = 7
-        [NoScaleOffset] _Matcap1 ("Border Matcap", 2D) = "white" {}
-        [HDR] _BorderCol ("Border Color", Color) = (2.23, 2.23, 2.23, 1)
-        [HDR] _GlowCol ("Glow Color", Color) = (0, 1.44, 3.0, 1)
-        [HDR] _ShadowCol ("Shadow Color", Color) = (0, 0, 0, 1)
+        [Header(Circles Color Settings)]
+        [NoScaleOffset] _CircleTex1 ("Texture", 2D) = "white" {}
+        [HDR] _CircleCol ("Color", Color) = (3, 3, 3, 1)
+        _CircleTex1Scale ("Scale", Float) = 7
+        [Header(Frame Color Settings)]
+        [NoScaleOffset] _Matcap1 ("Matcap", 2D) = "white" {}
+        [HDR] _FrameCol ("Color", Color) = (2.23, 2.23, 2.23, 1)
+        [Header(Dice Settings)]
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
-        _CloudScale ("Cloud Scale", Range(2, 20)) = 11.0
-        _CloudOffset ("Cloud Offset", Vector) = (0.02, 0.01, 0.05, 0)
-        _CloudIntensity ("Cloud Intensity", Range(0.0, 0.1)) = 0.05
-        _CloudRefract ("Cloud Refract", Range(-0.06, 0.06)) = -0.02
-        _Test ("Test Var", Vector) = (0, 0, 0, 0)
+        [Header(Cloud Settings)]
+        [KeywordEnum(TANoise, TriNoise)] _Noise ("Noise functions", Float) = 0.0
+        _CloudScale ("Scale", Range(0.5, 20)) = 11.0
+        _CloudOffset ("Offset", Vector) = (0.02, 0.01, 0.05, 0)
+        _CloudIntensity ("Intensity", Range(0.0, 0.15)) = 0.05
+        _CloudRefract ("Refract", Range(-0.06, 0.06)) = -0.02
+        [Header(Other Settings)]
+        [HDR] _GlowCol ("Glow Color", Color) = (0, 1.44, 3.0, 1)
+        //_Test ("Test Var", Vector) = (0, 0, 0, 0)
+        [NoScaleOffset] _TANoiseTex ("Texture Assisted Noise Bilinear", 2D) = "black" {}
+        [NoScaleOffset] _TANoiseTexNearest ("Texture Assisted Noise Nearest", 2D) = "black" {}
+        [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
     }
     SubShader
     {
@@ -38,7 +43,6 @@ Shader "SCRN/Dice"
         // not needed for rendering, you only ever see the front of the quad
         // but this makes Unity's scene selection allow for back face selection
         Cull Off
-        Blend SrcAlpha OneMinusSrcAlpha
 
         CGINCLUDE
         // should make shadow receiving work on mobile
@@ -364,7 +368,7 @@ Shader "SCRN/Dice"
         uniform float _EdgeCut;
         uniform float _EdgeRound;
 
-        uniform float4 _Test;
+        //uniform float4 _Test;
 
         /*
             out:
@@ -530,14 +534,13 @@ Shader "SCRN/Dice"
         uniform float _CircleTex1Scale;
         uniform float4 _CircleCol;
         uniform Texture2D<float4> _Matcap1;
-        uniform float4 _BorderCol;
+        uniform float4 _FrameCol;
         uniform float4 _GlowCol;
 
         uniform float _CloudScale;
         uniform float _CloudIntensity;
         uniform float _CloudRefract;
         uniform float3 _CloudOffset;
-        uniform float4 _ShadowCol;
 
         uniform float audio1;
         uniform float audio2;
@@ -590,7 +593,54 @@ Shader "SCRN/Dice"
             output = (x * w.x + y * w.y) / (w.x + w.y);
         }
 
-        static const float cref = 0.95;
+    #if defined(_NOISE_TRINOISE)
+        // Noise from Nimitz https://www.shadertoy.com/view/4ts3z2
+        float tri(in float x)
+        {
+            return abs(frac(x) - .5);
+        }
+        float3 tri3(in float3 p)
+        {
+            return float3( tri(p.z + tri(p.y * 1.)), tri(p.z + tri(p.x * 1.)), tri(p.y + tri(p.z * 1.)));
+        }
+
+        float triNoise3d(in float3 p, in float inter)
+        {
+            float z= 1.4;
+            float rz = 0.;
+            float3 bp = p;
+            for (float i = 0.; i <= inter; i++)
+            {
+                p += tri3(bp * 2.);
+
+                p += _CloudOffset * _Time.y;
+
+                bp *= 1.8;
+                z *= 1.5;
+                p *= 1.2;
+                
+                rz+= (tri(p.z + tri(p.x + tri(p.y)))) / z;
+                bp += 0.14;
+            }
+            return rz;
+        }
+
+        float mapClouds(in float3 p)
+        {
+            return triNoise3d(p, 3.0);
+        }
+
+        // faster 4 tap normals
+        float3 cloudNorm( in float3 p ){
+            const float2 e = float2(0.0015, -0.0015);
+            return normalize(
+                e.xyy*mapClouds(p+e.xyy) +
+                e.yyx*mapClouds(p+e.yyx) +
+                e.yxy*mapClouds(p+e.yxy) +
+                e.xxx*mapClouds(p+e.xxx));
+        }
+
+    #else
 
         // Texture assisted noise
         // https://github.com/cnlohr/shadertrixx/tree/main/Assets/cnlohr/Shaders/tanoise
@@ -618,12 +668,14 @@ Shader "SCRN/Dice"
                 e.yxy*mapClouds(p+e.yxy) +
                 e.xxx*mapClouds(p+e.xxx));
         }
+    #endif
 
         // from Guil https://www.shadertoy.com/view/MtX3Ws
         float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs,
             UnityLight light)
         {
             const float dt = .025;
+            float3 iniDir = rd;
             float t = mind;
             float4 col= 0..xxxx;
             float c = 0.;
@@ -653,12 +705,12 @@ Shader "SCRN/Dice"
                     pow(saturate(cloudHeight + 0.37), 2);
 
                 float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + light.color * dif * 0.2;
-                lin = lerp(lin, _ShadowCol.rgb, mixBottomShadow * _ShadowCol.a);
+                lin = lerp(lin, 0..xxx, mixBottomShadow);
 
                 col = 0.99*col + float4(lin, c * _CloudIntensity);
             }
             // sun flare
-            float sun = saturate(dot(light.dir, -rd));
+            float sun = saturate(dot(light.dir, -iniDir));
             col.rgb += float3(1.0,0.4,0.2) * light.color * (pow(sun, 3.0) * 0.3);
             return col;
         }
@@ -704,7 +756,7 @@ Shader "SCRN/Dice"
                 float3 worldViewRight = normalize(cross(viewDir, worldViewUp));
                 float2 matcapUV = float2(dot(worldViewRight, norm), dot(worldViewUp,norm)) * 0.5 + 0.5;
                 float4 matcapCol = _Matcap1.Sample(linear_repeat_sampler, matcapUV);
-                col = (matcapCol.rgb * _BorderCol.rgb) * effects * _BorderCol.a;
+                col = (matcapCol.rgb * _FrameCol.rgb) * effects * _FrameCol.a;
             }
             // circles
             else if (matID < 3.0)
@@ -724,6 +776,7 @@ Shader "SCRN/Dice"
 
         void marchInner(inout marchInOut mI, UnityLight light, inout float3 indirectSpec, float max_steps)
         {
+            const float cref = 0.95;
             float3 col = mI.col.rgb;
             float3 iniPos = mI.ro;
             float3 iniDir = mI.rd;
@@ -736,7 +789,7 @@ Shader "SCRN/Dice"
             // march into the back of the dice
             mI.ro = mI.ro + refr;
             mI.rd = -refr;
-            marchOuter(mI, 16.0);
+            marchOuter(mI, 32.0);
 
             float3 nout = diceNorm(mI.pos);
             float dout = mI.dist;
@@ -810,7 +863,7 @@ Shader "SCRN/Dice"
             // If there's no shadow pass just do the ray march
             if (DepthTextureExists())
             {
-                marchOuter(mI, 100.0);
+                marchOuter(mI, 150.0);
                 clip(mI.col.a - 0.01);
                 surfacePos = mI.pos;
                 worldPos = mul(unity_ObjectToWorld, float4(surfacePos, 1.0));
@@ -963,7 +1016,7 @@ Shader "SCRN/Dice"
             mI.matID = 0.0;
             mI.dist = 0.0;
 
-            marchOuter(mI, 100.0);
+            marchOuter(mI, 150.0);
             clip(mI.col.a - 0.01);
             float3 surfacePos = mI.pos;
 
@@ -993,7 +1046,7 @@ Shader "SCRN/Dice"
             #pragma skip_variants LIGHTMAP_ON DYNAMICLIGHTMAP_ON DIRLIGHTMAP_COMBINED SHADOWS_SHADOWMASK
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
-            //#pragma shader_feature_local _ _MAPPING_CUBEMAP
+            #pragma shader_feature_local _ _NOISE_TRINOISE
 
             // this shouldn't be needed as this should be handled by the multi_compile_fwdbase
             // but I couldn't get it to use this variant without this line
@@ -1020,7 +1073,7 @@ Shader "SCRN/Dice"
             #pragma multi_compile_fwdadd_fullshadows
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
-           // #pragma shader_feature_local _ _MAPPING_CUBEMAP
+            #pragma shader_feature_local _ _NOISE_TRINOISE
 
             ENDCG
         }
