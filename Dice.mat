@@ -52,4 +52,5 @@ Material:
     - _CircleCol: {r: 3, g: 3, b: 3, a: 1}
     - _CloudOffset: {r: 0.02, g: 0.01, b: 0.05, a: 0}
     - _FrameCol: {r: 2.23, g: 2.23, b: 2.23, a: 1}
-    - _GlowCol: {r: 0, g: 1.44, b: 3, a: 1}
+    - _GlowCol: {r: 0, g: 1.7245753, b: 3, a: 1}
+    - _Test: {r: 1, g: 0.05, b: 0, a: 0}

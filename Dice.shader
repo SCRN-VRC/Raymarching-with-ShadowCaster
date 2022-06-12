@@ -27,7 +27,7 @@ Shader "SCRN/Dice"
         _CloudScale ("Scale", Range(0.5, 20)) = 11.0
         _CloudOffset ("Offset", Vector) = (0.02, 0.01, 0.05, 0)
         _CloudIntensity ("Intensity", Range(0.0, 0.15)) = 0.05
-        _CloudRefract ("Refract", Range(-0.06, 0.06)) = -0.02
+        _CloudRefract ("Refract", Range(-0.06, 0.06)) = -0.01
         [Header(Other Settings)]
         [HDR] _GlowCol ("Glow Color", Color) = (0, 1.44, 3.0, 1)
         //_Test ("Test Var", Vector) = (0, 0, 0, 0)
@@ -78,6 +78,7 @@ Shader "SCRN/Dice"
             float3 rd : TEXCOORD0;
             float3 ro : TEXCOORD1;
             float4 modelPos : TEXCOORD2;
+            float maxScale : TEXCOORD3;
             UNITY_VERTEX_INPUT_INSTANCE_ID
         };
 
@@ -99,7 +100,7 @@ Shader "SCRN/Dice"
         {
             #define minor(a,b,c) determinant(float3x3(input.a, input.b, input.c))
             float4x4 cofactors = float4x4(
-                minor(_22_23_24, _32_33_34, _42_43_44), 
+                minor(_22_23_24, _32_33_34, _42_43_44),
                 -minor(_21_23_24, _31_33_34, _41_43_44),
                 minor(_21_22_24, _31_32_34, _41_42_44),
                 -minor(_21_22_23, _31_32_33, _41_42_43),
@@ -160,7 +161,7 @@ Shader "SCRN/Dice"
             float3 right = normalize(cross(forward, up));
             up = cross(right, forward);
             float3x3 quadOrientationMatrix = float3x3(right, up, forward);
-            
+
             // use the max scale to figure out how big the quad needs to be to cover the entire sphere
             // we're using a hardcoded object space radius of 0.5 in the fragment shader
             float maxRadius = maxScale * 0.5;
@@ -214,6 +215,7 @@ Shader "SCRN/Dice"
 
             // setting up to read the depth pass
             o.modelPos = mul(unity_WorldToObject, float4(worldPos, 1.0));
+            o.maxScale = maxScale;
             return o;
         }
 
@@ -351,7 +353,7 @@ Shader "SCRN/Dice"
             float3 o = p - m;
             float3 k = min(o, 0.0);
             o = o + (k.x + k.y + k.z) * 0.5 - k * 1.5;
-            o = clamp(o, 0.0, s); 
+            o = clamp(o, 0.0, s);
             return length(p - o) * sign(m);
         }
 
@@ -384,7 +386,7 @@ Shader "SCRN/Dice"
             float s = sdOctahedron(p, _EdgeRound);
             float c = box(p, 0.29.xxx);
             float dice = fOpIntersectionChamfer(s, c, 0.003);
-            
+
             // carve the box edges away
             float3 p2 = p;
             pR45(p2.xz);
@@ -448,7 +450,7 @@ Shader "SCRN/Dice"
             float3 rd = mI.rd;
             float t = 0.0;
             bool hit = false;
-            
+
             for (float i = 0.; i < max_steps; i++) {
                 float3 d = mapDice(p);
                 // more detail the closer
@@ -510,7 +512,7 @@ Shader "SCRN/Dice"
         float4x4 INVERSE_UNITY_MATRIX_VP;
 
         float3 calculateWorldSpace(float4 screenPos)
-        {	
+        {
             // Transform from adjusted screen pos back to world pos
             float4 worldPos = mul(INVERSE_UNITY_MATRIX_VP, screenPos);
             // Subtract camera position from vertex position in world
@@ -522,7 +524,7 @@ Shader "SCRN/Dice"
             screenUV = screenUV * 0.5f + 0.5f;
             // Adjust screen UV for VR single pass stereo support
             screenUV = UnityStereoTransformScreenSpaceTex(screenUV);
-            // Read depth, linearizing into worldspace units.    
+            // Read depth, linearizing into worldspace units.
             float depth = LinearEyeDepth(UNITY_SAMPLE_DEPTH(SampleScreenDepth(screenUV))) / screenPos.w;
             // Advance by depth along our view ray from the camera position.
             // This is the worldspace coordinate of the corresponding fragment
@@ -542,6 +544,7 @@ Shader "SCRN/Dice"
         uniform float _CloudRefract;
         uniform float3 _CloudOffset;
 
+        uniform float maxScale;
         uniform float audio1;
         uniform float audio2;
 
@@ -574,12 +577,12 @@ Shader "SCRN/Dice"
 
             // Project + fetch
             float4 x = tex.SampleGrad (samp,
-                                            float2(   p[ma.y],    p[ma.z]), 
-                                            float2(dpdx[ma.y], dpdx[ma.z]), 
+                                            float2(   p[ma.y],    p[ma.z]),
+                                            float2(dpdx[ma.y], dpdx[ma.z]),
                                             float2(dpdy[ma.y], dpdy[ma.z]));
 
             float4 y = tex.SampleGrad (samp,
-                                            float2(   p[me.y],    p[me.z]), 
+                                            float2(   p[me.y],    p[me.z]),
                                             float2(dpdx[me.y], dpdx[me.z]),
                                             float2(dpdy[me.y], dpdy[me.z]));
 
@@ -618,7 +621,7 @@ Shader "SCRN/Dice"
                 bp *= 1.8;
                 z *= 1.5;
                 p *= 1.2;
-                
+
                 rz+= (tri(p.z + tri(p.x + tri(p.y)))) / z;
                 bp += 0.14;
             }
@@ -671,6 +674,7 @@ Shader "SCRN/Dice"
     #endif
 
         // from Guil https://www.shadertoy.com/view/MtX3Ws
+        // added fake lights and shadow
         float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs,
             UnityLight light)
         {
@@ -681,6 +685,7 @@ Shader "SCRN/Dice"
             float c = 0.;
 
             float3 objWorldCenter = mul(unity_ObjectToWorld, float4(0..xxx, 1.0));
+            light.color = tanh(light.color);
 
             for( float i = 0.; i < maxs; i++ )
             {
@@ -689,29 +694,29 @@ Shader "SCRN/Dice"
                 float3 pos = ro+t*rd;
                 c = mapClouds(pos);
                 rd = normalize(lerp(rd, -cloudNorm(pos), _CloudRefract));  // Little refraction effect
-                
-                // compare cloud density in direction of light
-                float dif = saturate((c - mapClouds(pos+0.1*light.dir))/0.6);
-                
+
                 // get how far the bottom of the cloud is away from the center
                 float3 cloudWorld = mul(unity_ObjectToWorld, float4(pos, 1.0));
                 float cloudHeight = (cloudWorld.y - objWorldCenter.y) > 0.0 ? objWorldCenter.y : cloudWorld.y;
                 float noise = tanoise2(pos.xz * 4.3) * 0.4;
-                cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) + noise) * 0.17, 0.5);
+                cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) / maxScale + noise) * 0.17, 0.5);
 
                 // Fake shadows
                 float mixBottomShadow = dot(light.dir, float3(0, 1, 0));
-                mixBottomShadow = saturate((mixBottomShadow * 0.5 + 0.5)) * 
+                mixBottomShadow = saturate((mixBottomShadow * 0.5 + 0.5)) *
                     pow(saturate(cloudHeight + 0.37), 2);
 
+                // compare cloud density in direction of light
+                float dif = saturate((c - mapClouds(pos+0.1*light.dir))/0.6);
                 float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + light.color * dif * 0.2;
                 lin = lerp(lin, 0..xxx, mixBottomShadow);
 
                 col = 0.99*col + float4(lin, c * _CloudIntensity);
             }
-            // sun flare
+
             float sun = saturate(dot(light.dir, -iniDir));
-            col.rgb += float3(1.0,0.4,0.2) * light.color * (pow(sun, 3.0) * 0.3);
+            col.rgb += float3(1.0,0.4,0.2) * (pow(sun, 3.0) * 0.3);
+
             return col;
         }
 
@@ -789,11 +794,11 @@ Shader "SCRN/Dice"
             // march into the back of the dice
             mI.ro = mI.ro + refr;
             mI.rd = -refr;
-            marchOuter(mI, 32.0);
+            marchOuter(mI, 16.0);
 
             float3 nout = diceNorm(mI.pos);
             float dout = mI.dist;
-            
+
             dout = 0.9 - dout;
             float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps, light);
 
@@ -801,7 +806,7 @@ Shader "SCRN/Dice"
             nout *= -1.;
             // Dirty trick to avoid refract returning a zero floattor when nornal and floattor are almost perpendicular and eta bigger than 1.
             float3 refrOut = refract(refr, nout, lerp(1. / cref, 1., smoothstep(0.35, 0.20, dot(refr, -nout))));
-            
+
             float3 iniWorldPos = mul(unity_ObjectToWorld, float4(iniPos, 1.0));
             float3 reflWorldPos = mul(unity_ObjectToWorld, float4(mI.pos, 1.0));
 
@@ -839,7 +844,7 @@ Shader "SCRN/Dice"
         {
             // instancing
             // even though we're not using any instanced properties
-            // we are using the unity_ObjectToWorld transform matrix 
+            // we are using the unity_ObjectToWorld transform matrix
             // and in instanced shaders, that needs the instance id
             UNITY_SETUP_INSTANCE_ID(i);
 
@@ -858,12 +863,13 @@ Shader "SCRN/Dice"
             float3 normal;
             float3 surfacePos;
             float4 clipPos;
+            maxScale = i.maxScale;
 
             [branch]
             // If there's no shadow pass just do the ray march
             if (DepthTextureExists())
             {
-                marchOuter(mI, 150.0);
+                marchOuter(mI, 100.0);
                 clip(mI.col.a - 0.01);
                 surfacePos = mI.pos;
                 worldPos = mul(unity_ObjectToWorld, float4(surfacePos, 1.0));
@@ -876,7 +882,7 @@ Shader "SCRN/Dice"
                 // get the world position from the depth pass
                 INVERSE_UNITY_MATRIX_VP = inverse(UNITY_MATRIX_VP);
                 float4 screenPos = UnityObjectToClipPos(i.modelPos);
-                float2 offset = 1.2 / _ScreenParams.xy * screenPos.w; 
+                float2 offset = 1.2 / _ScreenParams.xy * screenPos.w;
 
                 worldPos = calculateWorldSpace(screenPos) + UNITY_MATRIX_I_V._14_24_34;
 
@@ -885,7 +891,8 @@ Shader "SCRN/Dice"
                 surfacePos = mul(unity_WorldToObject, float4(worldPos, 1.0));
                 float3 dist = mapDice(surfacePos);
                 mI.matID = dist.y;
-                if (dist.x > 0.0015 * (1.0 + distance(worldPos, UNITY_MATRIX_I_V._14_24_34))) discard;
+                float checkDist = 0.005 / maxScale * (1.0 + distance(worldPos, UNITY_MATRIX_I_V._14_24_34));
+                if (dist.x > checkDist) discard;
             }
 
             normal = diceNorm(surfacePos);
@@ -975,9 +982,11 @@ Shader "SCRN/Dice"
                 light, indirectLight
             );
 
+        #ifdef UNITY_PASS_FORWARDBASE
             float3 glow = diceCheapGlow(surfacePos, mI.rd);
             glow.rgb = glow.rgb * (1.0 + audio1);
             mI.col.rgb += glow * _GlowCol.a * ((mI.matID == 1.0) ? 0.2 : 1.0);
+        #endif
 
             outDepth = mI.depth;
 
@@ -1016,7 +1025,7 @@ Shader "SCRN/Dice"
             mI.matID = 0.0;
             mI.dist = 0.0;
 
-            marchOuter(mI, 150.0);
+            marchOuter(mI, 100.0);
             clip(mI.col.a - 0.01);
             float3 surfacePos = mI.pos;
 
