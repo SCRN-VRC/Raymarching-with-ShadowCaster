@@ -17,7 +17,7 @@ Shader "SCRN/Dice"
         _CircleTex1Scale ("Scale", Float) = 7
         [Header(Frame Color Settings)]
         [NoScaleOffset] _Matcap1 ("Matcap", 2D) = "white" {}
-        [HDR] _FrameCol ("Color", Color) = (2.23, 2.23, 2.23, 1)
+        [HDR] _FrameCol ("Color", Color) = (1.5, 1.5, 1.5, 1)
         [Header(Dice Settings)]
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
@@ -779,7 +779,7 @@ Shader "SCRN/Dice"
             return col;
         }
 
-        void marchInner(inout marchInOut mI, UnityLight light, inout float3 indirectSpec, float max_steps)
+        void marchInner(inout marchInOut mI, UnityLight light, float max_steps)
         {
             const float cref = 0.95;
             float3 col = mI.col.rgb;
@@ -813,17 +813,14 @@ Shader "SCRN/Dice"
             // do colors
 
             // inside
-            float fresnel = 1.0 - pow(dot(n, -iniDir), 2);
             float ao = diceCheapAO(iniPos, n);
 
-            float3 colInner = refProbe(reflWorldPos, refrOut);
+            float3 colInner = refProbe(reflWorldPos, refrOut) * 0.1;
             colInner = applyMat(mI.matID, mI.pos, mI.rd, mI.norm, colInner, ao * (1. - c.a));
 
             col = lerp(colInner, c.rgb, c.a);
 
             // outside
-            indirectSpec = refProbe(iniWorldPos, refl) * fresnel * ao;
-            //col += indirectSpec;
             col = applyMat(iniMat, iniPos, iniDir, n, col, ao);
 
             mI.col = float4(col, 1.0);
@@ -854,7 +851,7 @@ Shader "SCRN/Dice"
             mI.rd = i.rd;
             mI.pos = float3(0., 0., 0.);
             mI.norm = float3(0., 1., 0.);
-            mI.col = float4(1., 1., 1., 1.);
+            mI.col = float4(0., 0., 0., 1.);
             mI.depth = 0.0;
             mI.matID = 0.0;
             mI.dist = 0.0;
@@ -947,8 +944,7 @@ Shader "SCRN/Dice"
             light.color = lighting;
             light.dir = worldLightDir;
 
-            float3 indirectSpec;
-            marchInner(mI, light, indirectSpec, 64.);
+            marchInner(mI, light, 64.);
 
             //apply lighting
 
@@ -966,13 +962,12 @@ Shader "SCRN/Dice"
         #else
             indirectLight.diffuse = max(0, ShadeSH9(float4(worldNormal, 1)));
             float3 reflectionDir = reflect(-mI.rd, mI.norm);
-            // Unity_GlossyEnvironmentData envData;
-            // envData.roughness = 1 - smoothness;
-            // envData.reflUVW = reflectionDir;
-            // indirectLight.specular = Unity_GlossyEnvironment(
-            //     UNITY_PASS_TEXCUBE(unity_SpecCube0), unity_SpecCube0_HDR, envData
-            // );
-            indirectLight.specular = indirectSpec;
+            Unity_GlossyEnvironmentData envData;
+            envData.roughness = 1 - smoothness;
+            envData.reflUVW = reflectionDir;
+            indirectLight.specular = Unity_GlossyEnvironment(
+                UNITY_PASS_TEXCUBE(unity_SpecCube0), unity_SpecCube0_HDR, envData
+            );
         #endif
 
             mI.col.rgb = UNITY_BRDF_PBS(
