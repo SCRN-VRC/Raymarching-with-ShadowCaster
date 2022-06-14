@@ -23,16 +23,14 @@ Shader "SCRN/Dice"
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         [Header(Cloud Settings)]
-        [KeywordEnum(TANoise, TriNoise)] _Noise ("Noise functions", Float) = 0.0
         _CloudScale ("Scale", Range(0.5, 20)) = 11.0
         _CloudOffset ("Offset", Vector) = (0.02, 0.01, 0.05, 0)
         _CloudIntensity ("Intensity", Range(0.0, 0.15)) = 0.05
         _CloudRefract ("Refract", Range(-0.06, 0.06)) = -0.01
         [Header(Other Settings)]
         [HDR] _GlowCol ("Glow Color", Color) = (0, 1.44, 3.0, 1)
-        //_Test ("Test Var", Vector) = (0, 0, 0, 0)
-        [NoScaleOffset] _TANoiseTex ("Texture Assisted Noise Bilinear", 2D) = "black" {}
-        [NoScaleOffset] _TANoiseTexNearest ("Texture Assisted Noise Nearest", 2D) = "black" {}
+        _Test ("Test Var", Vector) = (0, 0, 0, 0)
+        _NoiseTex ("Noise Texture", 2D) = "black" {}
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
     }
     SubShader
@@ -54,7 +52,6 @@ Shader "SCRN/Dice"
         #include "Lighting.cginc"
         #include "AutoLight.cginc"
         #include "UnityPBSLighting.cginc"
-        #include "./tanoise/tanoise.cginc"
         #include "./AudioLink/AudioLink.cginc"
 
         // real check needed for enabling conservative depth
@@ -272,11 +269,15 @@ Shader "SCRN/Dice"
         uniform samplerCUBE _CubeTex;
 
         // https://catlikecoding.com/unity/tutorials/scriptable-render-pipeline/reflections/
-        float3 BoxProjection(float3 direction, float3 position,
-            float3 cubemapPosition, float3 boxMin, float3 boxMax) {
-            float3 factors = ((direction > 0 ? boxMax : boxMin) - position) / direction;
-            float scalar = min(min(factors.x, factors.y), factors.z);
-            return direction * scalar + (position - cubemapPosition);
+        float3 BoxProjection(float3 direction, float3 position, float4 cubemapPosition, float3 boxMin, float3 boxMax)
+        {
+            [branch]
+            if (cubemapPosition.w > 0) {
+                float3 factors = ((direction > 0 ? boxMax : boxMin) - position) / direction;
+                float scalar = min(min(factors.x, factors.y), factors.z);
+                direction = direction * scalar + (position - cubemapPosition);
+            }
+            return direction;
         }
 
         float3 refProbe(float3 worldPos, float3 reflVec)
@@ -285,7 +286,7 @@ Shader "SCRN/Dice"
                 unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin,
                 unity_SpecCube0_BoxMax);
 
-            float roughness = 1.0 - _Smoothness;
+            const float roughness = 0.2;
             float4 boxProbe0 = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, boxProject, roughness);
             boxProbe0.rgb = DecodeHDR(boxProbe0, unity_SpecCube0_HDR);
 
@@ -370,7 +371,7 @@ Shader "SCRN/Dice"
         uniform float _EdgeCut;
         uniform float _EdgeRound;
 
-        //uniform float4 _Test;
+        uniform float4 _Test;
 
         /*
             out:
@@ -418,8 +419,8 @@ Shader "SCRN/Dice"
             float light = ccut * 5.0;
             matID = dice == ccut ? 1.0 : matID;
 
-            //short circuting for better performance
-            if (dice > 0.01) return float3(dice, matID, light);
+            // //short circuting for better performance
+            // if (dice > 0.01) return float3(dice, matID, light);
 
             float d = sphere(p + dips[0], dipsR[0]);
             for (int i = 1; i < 21; i++) {
@@ -454,7 +455,7 @@ Shader "SCRN/Dice"
             for (float i = 0.; i < max_steps; i++) {
                 float3 d = mapDice(p);
                 // more detail the closer
-                if (d.x < (0.001 * (t + 1.0))) {
+                if (d.x < (0.0001 * (t + 1.0))) {
                     hit = true;
                     mI.matID = d.y;
                     break;
@@ -533,16 +534,19 @@ Shader "SCRN/Dice"
         }
 
         uniform Texture2D<float4> _CircleTex1;
-        uniform float _CircleTex1Scale;
-        uniform float4 _CircleCol;
         uniform Texture2D<float4> _Matcap1;
+        uniform sampler2D _NoiseTex;
+
+        uniform float4 _CircleCol;
+        uniform float _CircleTex1Scale;
+
         uniform float4 _FrameCol;
         uniform float4 _GlowCol;
 
+        uniform float3 _CloudOffset;
         uniform float _CloudScale;
         uniform float _CloudIntensity;
         uniform float _CloudRefract;
-        uniform float3 _CloudOffset;
 
         uniform float maxScale;
         uniform float audio1;
@@ -596,70 +600,49 @@ Shader "SCRN/Dice"
             output = (x * w.x + y * w.y) / (w.x + w.y);
         }
 
-    #if defined(_NOISE_TRINOISE)
-        // Noise from Nimitz https://www.shadertoy.com/view/4ts3z2
-        float tri(in float x)
-        {
-            return abs(frac(x) - .5);
+        float noise(float3 x) {
+            float3 p = floor(x);
+            float3 f = frac(x);
+            f = f*f*(3.0-2.0*f);
+            
+            float2 uv = (p.xy+float2(37.0,239.0)*p.z) + f.xy;
+            float2 rg = tex2Dlod(_NoiseTex, float4((uv+0.5)/256.0, 0, 0)).yx;
+            return lerp( rg.x, rg.y, f.z )*2.0-1.0;
         }
-        float3 tri3(in float3 p)
-        {
-            return float3( tri(p.z + tri(p.y * 1.)), tri(p.z + tri(p.x * 1.)), tri(p.y + tri(p.z * 1.)));
-        }
 
-        float triNoise3d(in float3 p, in float inter)
-        {
-            float z= 1.4;
-            float rz = 0.;
-            float3 bp = p;
-            for (float i = 0.; i <= inter; i++)
-            {
-                p += tri3(bp * 2.);
-
-                p += _CloudOffset * _Time.y;
-
-                bp *= 1.8;
-                z *= 1.5;
-                p *= 1.2;
-
-                rz+= (tri(p.z + tri(p.x + tri(p.y)))) / z;
-                bp += 0.14;
+        //https://iquilezles.org/articles/fbm
+        float fbm(in float3 x) {
+            const float H = 1.0;
+            const int num_octaves = 5;
+            
+            float G = exp2(-H);
+            
+            float f = 1.0;
+            float a = 1.0;
+            float t = 0.0;
+            
+            float3 flow = 0.05*_Time.y*float3(-1.0, 0.4, 1.0);
+            
+            for(int i=0; i<num_octaves; i++) {
+                t += (i>2) ? a*noise(f*(x-flow)): a*noise(f*x);
+                t *= -1.0;
+                f *= 2.0;
+                a *= G;
             }
-            return rz;
+            
+            return t;
         }
 
-        float mapClouds(in float3 p)
-        {
-            return triNoise3d(p, 3.0);
-        }
-
-        // faster 4 tap normals
-        float3 cloudNorm( in float3 p ){
-            const float2 e = float2(0.0015, -0.0015);
-            return normalize(
-                e.xyy*mapClouds(p+e.xyy) +
-                e.yyx*mapClouds(p+e.yyx) +
-                e.yxy*mapClouds(p+e.yxy) +
-                e.xxx*mapClouds(p+e.xxx));
-        }
-
-    #else
-
-        // Texture assisted noise
-        // https://github.com/cnlohr/shadertrixx/tree/main/Assets/cnlohr/Shaders/tanoise
-        float TA_map3( in float3 p )
-        {
-            float3 q = p - _CloudOffset * _Time.y;
-            float f;
-            f  = 0.50000*tanoise3_1d( q ); q = q*2.02;
-            f += 0.25000*tanoise3_1d( q ); q = q*2.03;
-            f += 0.12500*tanoise3_1d( q );
-            return f * 1.5;
-        }
-
-        float mapClouds(in float3 p)
-        {
-            return TA_map3(p);
+        float mapClouds(float3 po) {
+            float3 t = float3(0.0, 1.0, 0.0);
+            float3 q = po * float3(1.0, 3.0, 1.0);
+            float3 p = po * float3(1.0, 1.5, 1.0);
+            
+            float sd = sphere(p-0.75*t-0.1*t.yxx, _Test.y);
+            //sd = smin(sd, sphere(p-0.75*t-0.1*t.yxx, 0.7), 0.1);
+            
+            sd += _Test.x*fbm(po * _Test.z);
+            return sd;
         }
 
         // faster 4 tap normals
@@ -671,51 +654,50 @@ Shader "SCRN/Dice"
                 e.yxy*mapClouds(p+e.yxy) +
                 e.xxx*mapClouds(p+e.xxx));
         }
-    #endif
 
         // from Guil https://www.shadertoy.com/view/MtX3Ws
         // added fake lights and shadow
         float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs,
             UnityLight light)
         {
-            const float dt = .025;
+            // const float dt = .025;
             float3 iniDir = rd;
             float t = mind;
             float4 col= 0..xxxx;
             float c = 0.;
 
-            float3 objWorldCenter = mul(unity_ObjectToWorld, float4(0..xxx, 1.0));
-            light.color = tanh(light.color);
+            // float3 objWorldCenter = mul(unity_ObjectToWorld, float4(0..xxx, 1.0));
+            // light.color = tanh(light.color);
 
-            for( float i = 0.; i < maxs; i++ )
-            {
-                t+=dt*exp(-2.*c);
-                if( t > maxd || col.a >= 1.0) break;
-                float3 pos = ro+t*rd;
-                c = mapClouds(pos);
-                rd = normalize(lerp(rd, -cloudNorm(pos), _CloudRefract));  // Little refraction effect
+            // for( float i = 0.; i < maxs; i++ )
+            // {
+            //     t+=dt*exp(-2.*c);
+            //     if( t > maxd || col.a >= 1.0) break;
+            //     float3 pos = ro+t*rd;
+            //     c = mapClouds(pos);
+            //     rd = normalize(lerp(rd, -cloudNorm(pos), _CloudRefract));  // Little refraction effect
 
-                // get how far the bottom of the cloud is away from the center
-                float3 cloudWorld = mul(unity_ObjectToWorld, float4(pos, 1.0));
-                float cloudHeight = (cloudWorld.y - objWorldCenter.y) > 0.0 ? objWorldCenter.y : cloudWorld.y;
-                float noise = tanoise2(pos.xz * 4.3) * 0.4;
-                cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) / maxScale + noise) * 0.17, 0.5);
+            //     // get how far the bottom of the cloud is away from the center
+            //     float3 cloudWorld = mul(unity_ObjectToWorld, float4(pos, 1.0));
+            //     float cloudHeight = (cloudWorld.y - objWorldCenter.y) > 0.0 ? objWorldCenter.y : cloudWorld.y;
+            //     float noiseOut = noise(float3(pos.xz * 4.3, 1.0)) * 0.4;
+            //     cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) / maxScale + noiseOut) * 0.17, 0.5);
 
-                // Fake shadows
-                float mixBottomShadow = dot(light.dir, float3(0, 1, 0));
-                mixBottomShadow = saturate((mixBottomShadow * 0.5 + 0.5)) *
-                    pow(saturate(cloudHeight + 0.37), 2);
+            //     // Fake shadows
+            //     float mixBottomShadow = dot(light.dir, float3(0, 1, 0));
+            //     mixBottomShadow = saturate((mixBottomShadow * 0.5 + 0.5)) *
+            //         pow(saturate(cloudHeight + 0.37), 2);
 
-                // compare cloud density in direction of light
-                float dif = saturate((c - mapClouds(pos+0.1*light.dir))/0.6);
-                float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + light.color * dif * 0.2;
-                lin = lerp(lin, 0..xxx, mixBottomShadow);
+            //     // compare cloud density in direction of light
+            //     float dif = saturate((c - mapClouds(pos+0.1*light.dir))/0.6);
+            //     float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + light.color * dif * 0.2;
+            //     lin = lerp(lin, 0..xxx, mixBottomShadow);
 
-                col = 0.99*col + float4(lin, c * _CloudIntensity);
-            }
+            //     col = 0.99*col + float4(lin, c * _CloudIntensity);
+            // }
 
-            float sun = saturate(dot(light.dir, -iniDir));
-            col.rgb += float3(1.0,0.4,0.2) * (pow(sun, 3.0) * 0.3);
+            // float sun = saturate(dot(light.dir, -iniDir));
+            // col.rgb += float3(1.0,0.4,0.2) * (pow(sun, 3.0) * 0.3);
 
             return col;
         }
@@ -739,7 +721,7 @@ Shader "SCRN/Dice"
             for (float i = 0; i < 3; i++)
             {
                 float3 d = mapDice(p + rd * (-0.05 * i));
-                li += 0.1 / (1.0 + d.z * d.z * (300.0 - 50.0 * audio1));
+                li += 0.1 / (1.0 + d.z * d.z * (500.0 - 50.0 * audio1));
             }
 
             return _GlowCol.rgb * li;
@@ -759,7 +741,7 @@ Shader "SCRN/Dice"
                 // poi's matcap code from their toon shadur
                 float3 worldViewUp = normalize(float3(0, 1, 0) - viewDir * dot(viewDir, float3(0, 1, 0)));
                 float3 worldViewRight = normalize(cross(viewDir, worldViewUp));
-                float2 matcapUV = float2(dot(worldViewRight, norm), dot(worldViewUp,norm)) * 0.5 + 0.5;
+                float2 matcapUV = float2(dot(worldViewRight, norm), dot(worldViewUp, norm)) * 0.5 + 0.5;
                 float4 matcapCol = _Matcap1.Sample(linear_repeat_sampler, matcapUV);
                 col = (matcapCol.rgb * _FrameCol.rgb) * effects * _FrameCol.a;
             }
@@ -794,7 +776,7 @@ Shader "SCRN/Dice"
             // march into the back of the dice
             mI.ro = mI.ro + refr;
             mI.rd = -refr;
-            marchOuter(mI, 16.0);
+            marchOuter(mI, 32.0);
 
             float3 nout = diceNorm(mI.pos);
             float dout = mI.dist;
@@ -802,11 +784,9 @@ Shader "SCRN/Dice"
             dout = 0.9 - dout;
             float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps, light);
 
-            // If want the normal in the opposite direction we are inside not outside
-            nout *= -1.;
-            // Dirty trick to avoid refract returning a zero floattor when nornal and floattor are almost perpendicular and eta bigger than 1.
-            float3 refrOut = refract(refr, nout, lerp(1. / cref, 1., smoothstep(0.35, 0.20, dot(refr, -nout))));
-
+            float3 refrOut = refract(-mI.rd, nout, cref);
+            refrOut = UnityObjectToWorldDir(refrOut);
+            
             float3 iniWorldPos = mul(unity_ObjectToWorld, float4(iniPos, 1.0));
             float3 reflWorldPos = mul(unity_ObjectToWorld, float4(mI.pos, 1.0));
 
@@ -815,8 +795,8 @@ Shader "SCRN/Dice"
             // inside
             float ao = diceCheapAO(iniPos, n);
 
-            float3 colInner = refProbe(reflWorldPos, refrOut) * 0.1;
-            colInner = applyMat(mI.matID, mI.pos, mI.rd, mI.norm, colInner, ao * (1. - c.a));
+            float3 colInner = refProbe(reflWorldPos, refrOut) * 0.5;
+            colInner = applyMat(mI.matID, mI.pos, mI.rd, nout, colInner, ao * (1. - c.a));
 
             col = lerp(colInner, c.rgb, c.a);
 
@@ -866,7 +846,7 @@ Shader "SCRN/Dice"
             // If there's no shadow pass just do the ray march
             if (DepthTextureExists())
             {
-                marchOuter(mI, 100.0);
+                marchOuter(mI, 200.0);
                 clip(mI.col.a - 0.01);
                 surfacePos = mI.pos;
                 worldPos = mul(unity_ObjectToWorld, float4(surfacePos, 1.0));
@@ -888,7 +868,7 @@ Shader "SCRN/Dice"
                 surfacePos = mul(unity_WorldToObject, float4(worldPos, 1.0));
                 float3 dist = mapDice(surfacePos);
                 mI.matID = dist.y;
-                float checkDist = 0.005 / maxScale * (1.0 + distance(worldPos, UNITY_MATRIX_I_V._14_24_34));
+                float checkDist = 0.0005 / maxScale * (1.0 + distance(worldPos, UNITY_MATRIX_I_V._14_24_34));
                 if (dist.x > checkDist) discard;
             }
 
@@ -917,6 +897,7 @@ Shader "SCRN/Dice"
             // basic lighting
             float3 worldNormal = UnityObjectToWorldNormal(normal);
             float3 worldLightDir = normalize(UnityWorldSpaceLightDir(worldPos));
+            float3 worldDir = UnityObjectToWorldDir(mI.rd);
             float ndotl = saturate(dot(worldNormal, worldLightDir));
 
             // get shadow, attenuation, and cookie
@@ -961,7 +942,7 @@ Shader "SCRN/Dice"
             indirectLight.diffuse = indirectLight.specular = 0;
         #else
             indirectLight.diffuse = max(0, ShadeSH9(float4(worldNormal, 1)));
-            float3 reflectionDir = reflect(-mI.rd, mI.norm);
+            float3 reflectionDir = reflect(worldDir, worldNormal);
             Unity_GlossyEnvironmentData envData;
             envData.roughness = 1 - smoothness;
             envData.reflUVW = reflectionDir;
@@ -973,7 +954,7 @@ Shader "SCRN/Dice"
             mI.col.rgb = UNITY_BRDF_PBS(
                 albedo, specularTint,
                 oneMinusReflectivity, smoothness,
-                mI.norm, -mI.rd,
+                worldNormal, worldDir,
                 light, indirectLight
             );
 
@@ -1020,7 +1001,7 @@ Shader "SCRN/Dice"
             mI.matID = 0.0;
             mI.dist = 0.0;
 
-            marchOuter(mI, 100.0);
+            marchOuter(mI, 200.0);
             clip(mI.col.a - 0.01);
             float3 surfacePos = mI.pos;
 
@@ -1050,12 +1031,8 @@ Shader "SCRN/Dice"
             #pragma skip_variants LIGHTMAP_ON DYNAMICLIGHTMAP_ON DIRLIGHTMAP_COMBINED SHADOWS_SHADOWMASK
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
-            #pragma shader_feature_local _ _NOISE_TRINOISE
+            //#pragma shader_feature_local _ _NOISE_TRINOISE
 
-            // this shouldn't be needed as this should be handled by the multi_compile_fwdbase
-            // but I couldn't get it to use this variant without this line
-            // might be because we're doing vertex lights in the fragment instead of vertex shader
-            #pragma multi_compile _ VERTEXLIGHT_ON
             ENDCG
         }
 
@@ -1077,7 +1054,7 @@ Shader "SCRN/Dice"
             #pragma multi_compile_fwdadd_fullshadows
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
-            #pragma shader_feature_local _ _NOISE_TRINOISE
+            //#pragma shader_feature_local _ _NOISE_TRINOISE
 
             ENDCG
         }

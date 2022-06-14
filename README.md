@@ -11,7 +11,7 @@ Ray marching in the shadow pass writes to the depth buffer which can be sampled 
 ## General Resources
 
 - [cnlohr's shadertrixx](https://github.com/cnlohr/shadertrixx),
-a lot of shader tips for Unity which I used. One of which is [tanoise](https://github.com/cnlohr/shadertrixx/tree/main/Assets/cnlohr/Shaders/tanoise), very fast texture assisted 3D+ noise method which I used to generate the clouds with.
+a lot of shader tips for Unity.
 - [Catlike Coding](https://catlikecoding.com/unity/tutorials/scriptable-render-pipeline/reflections/), [Poiyomi's Toon Shader](https://github.com/poiyomi/PoiyomiToonShader), [Xiexe's XSToon](https://github.com/Xiexe/Xiexes-Unity-Shaders) which I took lighting/shading methods from.
 - [iq's articles](https://iquilezles.org/articles/distfunctions/) and [hg_sdf](https://mercury.sexy/hg_sdf/) for all SDF primitives and operators.
 - Most of the code in the vertex shader is from [bgolus' Shpere Imposter](https://bgolus.medium.com/rendering-a-sphere-on-a-quad-13c92025570c)
