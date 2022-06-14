@@ -47,8 +47,8 @@ Material:
     m_Colors:
     - _CircleCol: {r: 3, g: 3, b: 3, a: 1}
     - _CloudColor: {r: 1, g: 1, b: 1, a: 1}
-    - _CloudGlowCol: {r: 0, g: 1.4695696, b: 1.9766746, a: 1}
+    - _CloudGlowCol: {r: 1.2791626, g: 0, b: 1.9766747, a: 1}
     - _CloudOffset: {r: 0.02, g: 0.01, b: 0.05, a: 0}
     - _FrameCol: {r: 2.6082377, g: 2.6082377, b: 2.6082377, a: 1}
-    - _GlowCol: {r: 0, g: 1.44, b: 3, a: 1}
+    - _GlowCol: {r: 0.7608303, g: 0, b: 4.5412054, a: 1}
     - _Test: {r: 0, g: 0, b: 0, a: 0}
