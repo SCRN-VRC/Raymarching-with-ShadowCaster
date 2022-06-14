@@ -23,6 +23,7 @@ Shader "SCRN/Dice"
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         [Header(Cloud Settings)]
+        [KeywordEnum(On, Off)] _Cloud ("Cloud On", Float) = 0.0
         [HDR] _CloudColor ("Color", Color) = (1.0, 1.0, 1.0, 1)
         [HDR] _CloudGlowCol ("Glow Color", Color) = (0, 2.22, 3.0, 1)
         _CloudScale ("Scale", Range(0.0, 7.0)) = 6.0
@@ -39,10 +40,6 @@ Shader "SCRN/Dice"
     {
         Tags { "Queue"="AlphaTest" "RenderType"="Opaque" "DisableBatching"="True" }
         LOD 100
-
-        // not needed for rendering, you only ever see the front of the quad
-        // but this makes Unity's scene selection allow for back face selection
-        Cull Off
 
         CGINCLUDE
         // should make shadow receiving work on mobile
@@ -290,7 +287,8 @@ Shader "SCRN/Dice"
                 unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin,
                 unity_SpecCube0_BoxMax);
 
-            const float roughness = 0.2;
+            float roughness = 1 - _Smoothness;
+            roughness *= 1.7 - 0.7 * roughness;
             float4 boxProbe0 = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, boxProject, roughness);
             boxProbe0.rgb = DecodeHDR(boxProbe0, unity_SpecCube0_HDR);
 
@@ -657,7 +655,7 @@ Shader "SCRN/Dice"
         float4 marchClouds( float3 ro, inout float3 rd, float mind, float maxd, float maxs, UnityLight light)
         {
             float3 cloudColor = _CloudColor.rgb * _CloudColor.a;
-            float3 lightVec = light.dir;
+            float3 lightVec = _WorldSpaceLightPos0.w == 0.0 ? float3(0, 1, 0) : light.dir;
 
             const float steps = maxs;
             const float shadowSteps = 10.;
@@ -791,9 +789,13 @@ Shader "SCRN/Dice"
             float3 nout = diceNorm(mI.pos);
             float dout = mI.dist;
 
+        #if defined(_CLOUD_ON)
             dout = 1.0 - dout;
             float4 c = marchClouds(iniPos, iniDir, 0., dout, max_steps, light);
-            
+        #else
+            float4 c = 0..xxxx;
+        #endif
+
             float3 refrOut = refract(-mI.rd, nout, cref);
             refrOut = UnityObjectToWorldDir(refrOut);
 
@@ -805,7 +807,10 @@ Shader "SCRN/Dice"
             // inside
             float ao = diceCheapAO(iniPos, n);
 
-            float3 colInner = refProbe(reflWorldPos, refrOut) * 0.5;
+            float3 colInner = refProbe(reflWorldPos, refrOut);
+        #if defined(_CLOUD_ON)
+            colInner *= 0.5;
+        #endif
             colInner = applyMat(mI.matID, mI.pos, mI.rd, nout, colInner, ao * (1. - c.a));
 
             col = lerp(colInner, c.rgb, c.a);
@@ -1044,7 +1049,7 @@ Shader "SCRN/Dice"
             #pragma skip_variants LIGHTMAP_ON DYNAMICLIGHTMAP_ON DIRLIGHTMAP_COMBINED SHADOWS_SHADOWMASK
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
-            //#pragma shader_feature_local _ _NOISE_TRINOISE
+            #pragma shader_feature_local _ _CLOUD_ON
 
             ENDCG
         }
@@ -1067,7 +1072,7 @@ Shader "SCRN/Dice"
             #pragma multi_compile_fwdadd_fullshadows
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
-            //#pragma shader_feature_local _ _NOISE_TRINOISE
+            #pragma shader_feature_local _ _CLOUD_ON
 
             ENDCG
         }
