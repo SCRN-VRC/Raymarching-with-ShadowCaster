@@ -23,10 +23,11 @@ Shader "SCRN/Dice"
         _EdgeCut ("Edge Cut", Range(0, 2)) = 0.781
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         [Header(Cloud Settings)]
-        _CloudScale ("Scale", Range(0.5, 20)) = 11.0
+        [HDR] _CloudColor ("Color", Color) = (1.0, 1.0, 1.0, 1)
+        _CloudScale ("Scale", Range(0.0, 7.0)) = 6.0
+        _CloudIntensity ("Intensity", Range(0.0, 10.)) = 5.0
+        _CloudShadow ("Shadow Intensity", Range(0.1, 1.0)) = 0.6
         _CloudOffset ("Offset", Vector) = (0.02, 0.01, 0.05, 0)
-        _CloudIntensity ("Intensity", Range(0.0, 0.15)) = 0.05
-        _CloudRefract ("Refract", Range(-0.06, 0.06)) = -0.01
         [Header(Other Settings)]
         [HDR] _GlowCol ("Glow Color", Color) = (0, 1.44, 3.0, 1)
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
@@ -75,7 +76,8 @@ Shader "SCRN/Dice"
             float3 rd : TEXCOORD0;
             float3 ro : TEXCOORD1;
             float4 modelPos : TEXCOORD2;
-            float maxScale : TEXCOORD3;
+            float3 center : TEXCOORD3;
+            float maxScale : TEXCOORD4;
             UNITY_VERTEX_INPUT_INSTANCE_ID
         };
 
@@ -212,6 +214,7 @@ Shader "SCRN/Dice"
 
             // setting up to read the depth pass
             o.modelPos = mul(unity_WorldToObject, float4(worldPos, 1.0));
+            o.center = mul(unity_ObjectToWorld, float4(0., 0., 0., 1.));
             o.maxScale = maxScale;
             return o;
         }
@@ -543,10 +546,11 @@ Shader "SCRN/Dice"
         uniform float4 _FrameCol;
         uniform float4 _GlowCol;
 
+        uniform float4 _CloudColor;
         uniform float3 _CloudOffset;
         uniform float _CloudScale;
         uniform float _CloudIntensity;
-        uniform float _CloudRefract;
+        uniform float _CloudShadow;
 
         uniform float maxScale;
         uniform float audio1;
@@ -612,6 +616,7 @@ Shader "SCRN/Dice"
 
         //https://iquilezles.org/articles/fbm
         float fbm(in float3 x) {
+            x -= _Time.y * _CloudOffset.xyz;
             const float H = 1.0;
             const int num_octaves = 5;
             
@@ -620,12 +625,9 @@ Shader "SCRN/Dice"
             float f = 1.0;
             float a = 1.0;
             float t = 0.0;
-            
-            float3 flow = 0.05*_Time.y*float3(-1.0, 0.4, 1.0);
-            
+
             for(int i=0; i<num_octaves; i++) {
-                t += (i>2) ? a*noise(f*(x-flow)): a*noise(f*x);
-                t *= -1.0;
+                t += (i>2) ? a*noise(f*(x)): a*noise(f*x);
                 f *= 2.0;
                 a *= G;
             }
@@ -634,14 +636,8 @@ Shader "SCRN/Dice"
         }
 
         float mapClouds(float3 po) {
-            float3 t = float3(0.0, 1.0, 0.0);
-            float3 q = po * float3(1.0, 3.0, 1.0);
-            float3 p = po * float3(1.0, 1.5, 1.0);
-            
-            float sd = sphere(p-0.75*t-0.1*t.yxx, _Test.y);
-            //sd = smin(sd, sphere(p-0.75*t-0.1*t.yxx, 0.7), 0.1);
-            
-            sd += _Test.x*fbm(po * _Test.z);
+            float sd = sphere(po, -4.);
+            sd += _CloudIntensity * fbm(po * _CloudScale);
             return sd;
         }
 
@@ -655,51 +651,63 @@ Shader "SCRN/Dice"
                 e.xxx*mapClouds(p+e.xxx));
         }
 
-        // from Guil https://www.shadertoy.com/view/MtX3Ws
-        // added fake lights and shadow
-        float4 marchClouds( in float3 ro, inout float3 rd, float mind, float maxd, float maxs,
-            UnityLight light)
+        // https://www.shadertoy.com/view/sdjcRD
+        float4 marchClouds( float3 ro, inout float3 rd, float mind, float maxd, float maxs, UnityLight light)
         {
-            // const float dt = .025;
-            float3 iniDir = rd;
+            float3 cloudColor = _CloudColor.rgb * _CloudColor.a;
+            float3 lightVec = light.dir;
+
+            const float steps = maxs;
+            const float shadowSteps = 10.;
+
+            const float invSteps = 1. / (steps);
+            const float invShadowSteps = 1. / (shadowSteps);
+            const float stepDistance = maxd * invSteps;
+            const float shadowStepSize = 2 * invShadowSteps;
+
+            float3 lightColor = float3(0.,0.,0.);
+            float lightPower = 1.0;
+
+            float3 CurPos = ro;
+            float li = 0.0;
             float t = mind;
-            float4 col= 0..xxxx;
-            float c = 0.;
 
-            // float3 objWorldCenter = mul(unity_ObjectToWorld, float4(0..xxx, 1.0));
-            // light.color = tanh(light.color);
+            for(float I = 0; I < steps; ++I) {
 
-            // for( float i = 0.; i < maxs; i++ )
-            // {
-            //     t+=dt*exp(-2.*c);
-            //     if( t > maxd || col.a >= 1.0) break;
-            //     float3 pos = ro+t*rd;
-            //     c = mapClouds(pos);
-            //     rd = normalize(lerp(rd, -cloudNorm(pos), _CloudRefract));  // Little refraction effect
+                if (t > maxd) break;
 
-            //     // get how far the bottom of the cloud is away from the center
-            //     float3 cloudWorld = mul(unity_ObjectToWorld, float4(pos, 1.0));
-            //     float cloudHeight = (cloudWorld.y - objWorldCenter.y) > 0.0 ? objWorldCenter.y : cloudWorld.y;
-            //     float noiseOut = noise(float3(pos.xz * 4.3, 1.0)) * 0.4;
-            //     cloudHeight = pow((distance(cloudHeight, objWorldCenter.y) / maxScale + noiseOut) * 0.17, 0.5);
+                float cursample = mapClouds( CurPos ) * 3.0;
 
-            //     // Fake shadows
-            //     float mixBottomShadow = dot(light.dir, float3(0, 1, 0));
-            //     mixBottomShadow = saturate((mixBottomShadow * 0.5 + 0.5)) *
-            //         pow(saturate(cloudHeight + 0.37), 2);
+                if ( cursample > 0.01 ) {
 
-            //     // compare cloud density in direction of light
-            //     float dif = saturate((c - mapClouds(pos+0.1*light.dir))/0.6);
-            //     float3 lin = float3(c*c*c, c*c, c) * _CloudIntensity + light.color * dif * 0.2;
-            //     lin = lerp(lin, 0..xxx, mixBottomShadow);
+                    float3 lpos = CurPos;
 
-            //     col = 0.99*col + float4(lin, c * _CloudIntensity);
-            // }
+                    float shadowDist = 0.;
+                    for ( float S = 0 ; S < shadowSteps ; ++S ) {
+                        lpos += lightVec * shadowStepSize ;
+                        float lsample = mapClouds( lpos );
+                        shadowDist += lsample * _CloudShadow;
+                    }
 
-            // float sun = saturate(dot(light.dir, -iniDir));
-            // col.rgb += float3(1.0,0.4,0.2) * (pow(sun, 3.0) * 0.3);
+                    float curdensity = saturate( cursample * invSteps );
+                    float shadow = exp( - shadowDist * invShadowSteps );
+                    lightColor += shadow * curdensity * lightPower * (cloudColor);
+                    lightPower *= (1. - curdensity);
+                    
+                    // sample the dice again for the glow
+                    float glow = mapDice(CurPos).z;
+                    li += 0.1 / (1.0 + glow * glow * (200.)) * lightPower;
 
-            return col;
+                    if ( lightPower < 0.01 ) {
+                        break;
+                    }
+                }
+                t += min(0.02 * exp(-0.2 * cursample), stepDistance);
+                CurPos = ro + rd * t;
+            }
+
+            lightColor.rgb += _GlowCol.rgb * li * (audio1 * 0.5 + 0.5);
+            return float4( lightColor , 1.0 - lightPower );
         }
 
         // https://www.shadertoy.com/view/WsXSDH
@@ -781,12 +789,12 @@ Shader "SCRN/Dice"
             float3 nout = diceNorm(mI.pos);
             float dout = mI.dist;
 
-            dout = 0.9 - dout;
-            float4 c = marchClouds(iniPos * _CloudScale, refr, 0., dout, max_steps, light);
-
+            dout = 1.0 - dout;
+            float4 c = marchClouds(iniPos, iniDir, 0., dout, max_steps, light);
+            
             float3 refrOut = refract(-mI.rd, nout, cref);
             refrOut = UnityObjectToWorldDir(refrOut);
-            
+
             float3 iniWorldPos = mul(unity_ObjectToWorld, float4(iniPos, 1.0));
             float3 reflWorldPos = mul(unity_ObjectToWorld, float4(mI.pos, 1.0));
 
@@ -923,16 +931,19 @@ Shader "SCRN/Dice"
 
             UnityLight light;
             light.color = lighting;
-            light.dir = worldLightDir;
+            // no point lights in foward base, so just make everything directional
+            // from the center
+            light.dir = normalize(UnityWorldSpaceLightDir(i.center));
 
             marchInner(mI, light, 64.);
+            light.dir = worldLightDir;
 
             //apply lighting
 
             float3 specularTint;
             float oneMinusReflectivity;
             float smoothness = _Smoothness;
-            float metallic = (mI.matID == 1.0) ? 0.5 : 0.1;
+            float metallic = (mI.matID == 1.0) ? 0.7 : 0.1;
             float3 albedo = DiffuseAndSpecularFromMetallic(
                 mI.col.rgb, metallic, specularTint, oneMinusReflectivity
             );

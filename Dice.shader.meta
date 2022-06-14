@@ -5,9 +5,7 @@ ShaderImporter:
   defaultTextures:
   - _CircleTex1: {fileID: 2800000, guid: 962e3e241bcdba4408210cb262c13358, type: 3}
   - _Matcap1: {fileID: 2800000, guid: 1831b4106a80b5d479e191f95fb5c810, type: 3}
-  - _TANoiseTex: {fileID: 2800000, guid: 5b1a85025e92ddf47befef57c8813b94, type: 3}
-  - _TANoiseTexNearest: {fileID: 2800000, guid: 1813b264ec1260d4cb71645a0520dcd7,
-      type: 3}
+  - _NoiseTex: {fileID: 2800000, guid: 7707d560132966c49a1c33985571214f, type: 3}
   - _CubeTex: {fileID: 8900000, guid: 63ba39e2cf7829f4e90963cb7593468c, type: 3}
   nonModifiableTextures: []
   userData: 
