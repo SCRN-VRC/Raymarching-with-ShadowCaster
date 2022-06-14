@@ -38,7 +38,6 @@ Material:
     m_Floats:
     - _CircleTex1Scale: 7
     - _CloudIntensity: 5
-    - _CloudRefract: 0
     - _CloudScale: 6
     - _CloudShadow: 0.6
     - _EdgeCut: 0.781
@@ -47,7 +46,8 @@ Material:
     m_Colors:
     - _CircleCol: {r: 3, g: 3, b: 3, a: 1}
     - _CloudColor: {r: 1, g: 1, b: 1, a: 1}
-    - _CloudOffset: {r: 0.04, g: 0.02, b: -0.05, a: 0}
-    - _FrameCol: {r: 1.5, g: 1.5, b: 1.5, a: 1}
-    - _GlowCol: {r: 0.4437633, g: 0, b: 3, a: 1}
-    - _Test: {r: 2.5, g: 1, b: 0, a: 0}
+    - _CloudGlowCol: {r: 0, g: 2.22, b: 3, a: 1}
+    - _CloudOffset: {r: 0.02, g: 0.01, b: 0.05, a: 0}
+    - _FrameCol: {r: 2.6082377, g: 2.6082377, b: 2.6082377, a: 1}
+    - _GlowCol: {r: 0, g: 1.44, b: 3, a: 1}
+    - _Test: {r: 0, g: 0, b: 0, a: 0}

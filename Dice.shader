@@ -2,7 +2,7 @@
 
 https://bgolus.medium.com/rendering-a-sphere-on-a-quad-13c92025570c
 https://www.shadertoy.com/view/WtlGWr
-https://www.shadertoy.com/view/3tyyDz cloud idea
+https://www.shadertoy.com/view/3tyyDz
 https://github.com/netri/Neitri-Unity-Shaders
 
 */
@@ -24,6 +24,7 @@ Shader "SCRN/Dice"
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         [Header(Cloud Settings)]
         [HDR] _CloudColor ("Color", Color) = (1.0, 1.0, 1.0, 1)
+        [HDR] _CloudGlowCol ("Glow Color", Color) = (0, 2.22, 3.0, 1)
         _CloudScale ("Scale", Range(0.0, 7.0)) = 6.0
         _CloudIntensity ("Intensity", Range(0.0, 10.)) = 5.0
         _CloudShadow ("Shadow Intensity", Range(0.1, 1.0)) = 0.6
@@ -547,6 +548,7 @@ Shader "SCRN/Dice"
         uniform float4 _GlowCol;
 
         uniform float4 _CloudColor;
+        uniform float4 _CloudGlowCol;
         uniform float3 _CloudOffset;
         uniform float _CloudScale;
         uniform float _CloudIntensity;
@@ -706,7 +708,7 @@ Shader "SCRN/Dice"
                 CurPos = ro + rd * t;
             }
 
-            lightColor.rgb += _GlowCol.rgb * li * (audio1 * 0.5 + 0.5);
+            lightColor.rgb += _CloudGlowCol.rgb *(_CloudGlowCol.a * li * (audio1 * 0.5 + 0.5));
             return float4( lightColor , 1.0 - lightPower );
         }
 
