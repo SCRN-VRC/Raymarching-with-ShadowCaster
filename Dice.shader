@@ -25,13 +25,14 @@ Shader "SCRN/Dice"
         [Header(Cloud Settings)]
         [KeywordEnum(On, Off)] _Cloud ("Cloud On", Float) = 0.0
         [HDR] _CloudColor ("Color", Color) = (1.0, 1.0, 1.0, 1)
-        [HDR] _CloudGlowCol ("Glow Color", Color) = (0, 2.22, 3.0, 1)
-        _CloudScale ("Scale", Range(0.0, 7.0)) = 6.0
-        _CloudIntensity ("Intensity", Range(0.0, 10.)) = 5.0
-        _CloudShadow ("Shadow Intensity", Range(0.1, 1.0)) = 0.6
-        _CloudOffset ("Offset", Vector) = (0.02, 0.01, 0.05, 0)
+        [HDR] _CloudGlowCol ("Glow Color", Color) = (0, 1.8, 9.0, 1)
+        _CloudScale ("Scale", Range(1.0, 10.0)) = 5.2
+        _CloudNoiseScale ("Noise Scale", Range(1.0, 10.0)) = 6.0
+        _CloudSharpness ("Sharpness", Range(0.0, 20.0)) = 14.7
+        _CloudShadow ("Shadow Intensity", Range(0.1, 1.0)) = 0.25
+        _CloudOffset ("Offset", Vector) = (0.05, -0.04, 0.07, 0)
         [Header(Other Settings)]
-        [HDR] _GlowCol ("Glow Color", Color) = (0, 1.44, 3.0, 1)
+        [HDR] _GlowCol ("Glow Color", Color) = (0, 0.9, 3.0, 1)
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
         _NoiseTex ("Noise Texture", 2D) = "black" {}
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
@@ -549,7 +550,8 @@ Shader "SCRN/Dice"
         uniform float4 _CloudGlowCol;
         uniform float3 _CloudOffset;
         uniform float _CloudScale;
-        uniform float _CloudIntensity;
+        uniform float _CloudNoiseScale;
+        uniform float _CloudSharpness;
         uniform float _CloudShadow;
 
         uniform float maxScale;
@@ -636,8 +638,13 @@ Shader "SCRN/Dice"
         }
 
         float mapClouds(float3 po) {
-            float sd = sphere(po, -4.);
-            sd += _CloudIntensity * fbm(po * _CloudScale);
+
+            // if it's outside the dice bounds, ease off the density
+            float c = box(po, 0.3.xxx);
+            c = saturate(-(c * 0.5 - 0.5));
+
+            float sd = sphere(po, -_CloudScale);
+            sd += c * (_CloudSharpness * fbm(po * _CloudNoiseScale));
             return sd;
         }
 
@@ -655,7 +662,7 @@ Shader "SCRN/Dice"
         float4 marchClouds( float3 ro, inout float3 rd, float mind, float maxd, float maxs, UnityLight light)
         {
             float3 cloudColor = _CloudColor.rgb * _CloudColor.a;
-            float3 lightVec = _WorldSpaceLightPos0.w == 0.0 ? float3(0, 1, 0) : light.dir;
+            float3 lightVec = _WorldSpaceLightPos0.w == 0.0 ? float3(0.5, 0.0, 0.5) : light.dir;
 
             const float steps = maxs;
             const float shadowSteps = 10.;
@@ -663,7 +670,7 @@ Shader "SCRN/Dice"
             const float invSteps = 1. / (steps);
             const float invShadowSteps = 1. / (shadowSteps);
             const float stepDistance = maxd * invSteps;
-            const float shadowStepSize = 2 * invShadowSteps;
+            const float shadowStepSize = 0.75 * invShadowSteps;
 
             float3 lightColor = float3(0.,0.,0.);
             float lightPower = 1.0;
@@ -705,8 +712,9 @@ Shader "SCRN/Dice"
                 t += min(0.02 * exp(-0.2 * cursample), stepDistance);
                 CurPos = ro + rd * t;
             }
-
-            lightColor.rgb += _CloudGlowCol.rgb *(_CloudGlowCol.a * li * (audio1 * 0.5 + 0.5));
+            float lightScale = dot(light.color, float3(0.2125, 0.7154, 0.0721));
+            lightScale = smoothstep(0.0, 2.0, 1.0 - (lightScale - 1.0));
+            lightColor.rgb += _CloudGlowCol.rgb * (lightScale * _CloudGlowCol.a * li * (audio1 * 0.5 + 0.5));
             return float4( lightColor , 1.0 - lightPower );
         }
 
@@ -726,13 +734,13 @@ Shader "SCRN/Dice"
         float3 diceCheapGlow(float3 p, float3 rd)
         {
             float li = 0.0;
-            for (float i = 0; i < 3; i++)
+            for (float i = 0; i < 5; i++)
             {
-                float3 d = mapDice(p + rd * (-0.05 * i));
-                li += 0.1 / (1.0 + d.z * d.z * (500.0 - 50.0 * audio1));
+                float3 d = mapDice(p + rd * (-0.1 * i));
+                li += 0.1 / (1.0 + d.z * d.z * (1000.0 - 500.0 * audio1));
             }
 
-            return _GlowCol.rgb * li;
+            return _GlowCol.rgb * li * _GlowCol.a;
         }
 
         float3 applyMat(float matID, float3 pos, float3 viewDir,
@@ -919,11 +927,12 @@ Shader "SCRN/Dice"
             UNITY_LIGHT_ATTENUATION(atten, shadowIN, worldPos);
 
             // per pixel lighting
-            float3 lighting = _LightColor0 * ndotl * atten;
+            float3 lighting = _LightColor0 * atten * ndotl;
 
+            float3 vertexLighting = 0..xxx;
         #if defined(VERTEXLIGHT_ON)
             // "per vertex" non-important lights
-            float3 vertexLighting = Shade4PointLights(
+            vertexLighting = Shade4PointLights(
             unity_4LightPosX0, unity_4LightPosY0, unity_4LightPosZ0,
             unity_LightColor[0].rgb, unity_LightColor[1].rgb, unity_LightColor[2].rgb, unity_LightColor[3].rgb,
             unity_4LightAtten0, worldPos, worldNormal);
@@ -937,12 +946,13 @@ Shader "SCRN/Dice"
             audio2 = AudioLinkData( ALPASS_AUDIOLINK + int2( 0, 2 ) ).r * 2.0;
 
             UnityLight light;
-            light.color = lighting;
+            light.color = _LightColor0 + vertexLighting;
             // no point lights in foward base, so just make everything directional
             // from the center
             light.dir = normalize(UnityWorldSpaceLightDir(i.center));
 
             marchInner(mI, light, 64.);
+            light.color = lighting;
             light.dir = worldLightDir;
 
             //apply lighting
@@ -950,7 +960,7 @@ Shader "SCRN/Dice"
             float3 specularTint;
             float oneMinusReflectivity;
             float smoothness = _Smoothness;
-            float metallic = (mI.matID == 1.0) ? 0.7 : 0.1;
+            float metallic = (mI.matID == 1.0) ? 0.7 : 0.2;
             float3 albedo = DiffuseAndSpecularFromMetallic(
                 mI.col.rgb, metallic, specularTint, oneMinusReflectivity
             );
@@ -960,7 +970,7 @@ Shader "SCRN/Dice"
             indirectLight.diffuse = indirectLight.specular = 0;
         #else
             indirectLight.diffuse = max(0, ShadeSH9(float4(worldNormal, 1)));
-            float3 reflectionDir = reflect(worldDir, worldNormal);
+            float3 reflectionDir = reflect(-worldDir, worldNormal);
             Unity_GlossyEnvironmentData envData;
             envData.roughness = 1 - smoothness;
             envData.reflUVW = reflectionDir;
@@ -972,14 +982,14 @@ Shader "SCRN/Dice"
             mI.col.rgb = UNITY_BRDF_PBS(
                 albedo, specularTint,
                 oneMinusReflectivity, smoothness,
-                worldNormal, worldDir,
+                worldNormal, -worldDir,
                 light, indirectLight
             );
 
         #ifdef UNITY_PASS_FORWARDBASE
             float3 glow = diceCheapGlow(surfacePos, mI.rd);
             glow.rgb = glow.rgb * (1.0 + audio1);
-            mI.col.rgb += glow * _GlowCol.a * ((mI.matID == 1.0) ? 0.2 : 1.0);
+            mI.col.rgb += glow * ((mI.matID == 1.0) ? 0.2 : 1.0);
         #endif
 
             outDepth = mI.depth;
