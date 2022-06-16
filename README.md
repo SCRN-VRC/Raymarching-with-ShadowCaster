@@ -1,6 +1,6 @@
 # Raymarching with ShadowCaster Pass
 
-<img src="Images/preview.gif" align="middle"/>
+<img src="https://i.imgur.com/LOpZ3zB.gif" align="middle"/>
 
 ### NOTE: This was built and tested with Unity 2019.4.31f1 using built-in render pipeline, there may be shader compatibility issues with other versions.
 
