@@ -24,15 +24,15 @@ Shader "SCRN/Dice"
         _EdgeRound ("Edge Round", Range(0, 1)) = 0.712
         [Header(Cloud Settings)]
         [KeywordEnum(On, Off)] _Cloud ("Cloud On", Float) = 0.0
-        [HDR] _CloudColor ("Color", Color) = (1.0, 1.0, 1.0, 1)
-        [HDR] _CloudGlowCol ("Glow Color", Color) = (0, 1.8, 9.0, 1)
-        _CloudScale ("Scale", Range(1.0, 10.0)) = 5.2
-        _CloudNoiseScale ("Noise Scale", Range(1.0, 10.0)) = 6.0
-        _CloudSharpness ("Sharpness", Range(0.0, 20.0)) = 14.7
-        _CloudShadow ("Shadow Intensity", Range(0.1, 1.0)) = 0.25
+        [HDR] _CloudColor ("Color", Color) = (0.5, 0.5, 0.5, 1)
+        [HDR] _CloudGlowCol ("Glow Color", Color) = (0.74, 0.0, 3.2, 1)
+        _CloudScale ("Scale", Range(1.0, 10.0)) = 3.18
+        _CloudNoiseScale ("Noise Scale", Range(1.0, 10.0)) = 9.46
+        _CloudSharpness ("Sharpness", Range(0.0, 20.0)) = 8.4
+        _CloudShadow ("Shadow Multiplier", Range(0.0, 1.0)) = 0.517
         _CloudOffset ("Offset", Vector) = (0.05, -0.04, 0.07, 0)
         [Header(Other Settings)]
-        [HDR] _GlowCol ("Glow Color", Color) = (0, 0.9, 3.0, 1)
+        [HDR] _GlowCol ("Glow Color", Color) = (2.48, 0.0, 4.54, 1)
         _Test ("Test Var", Vector) = (0, 0, 0, 0)
         _NoiseTex ("Noise Texture", 2D) = "black" {}
         [NoScaleOffset] _CubeTex ("Fallback Cubemap Texture", Cube) = "black" {}
@@ -640,7 +640,7 @@ Shader "SCRN/Dice"
         float mapClouds(float3 po) {
 
             // if it's outside the dice bounds, ease off the density
-            float c = box(po, 0.3.xxx);
+            float c = box(po, 0.2.xxx);
             c = saturate(-(c * 0.5 - 0.5));
 
             float sd = sphere(po, -_CloudScale);
@@ -668,7 +668,7 @@ Shader "SCRN/Dice"
             const float shadowSteps = 10.;
 
             const float invSteps = 1. / (steps);
-            const float invShadowSteps = 1. / (shadowSteps);
+            const float invShadowSteps = 0.75 / (shadowSteps);
             const float stepDistance = maxd * invSteps;
             const float shadowStepSize = 0.75 * invShadowSteps;
 
@@ -692,12 +692,13 @@ Shader "SCRN/Dice"
                     float shadowDist = 0.;
                     for ( float S = 0 ; S < shadowSteps ; ++S ) {
                         lpos += lightVec * shadowStepSize ;
-                        float lsample = mapClouds( lpos );
+                        float lsample = (mapClouds( lpos ));
                         shadowDist += lsample * _CloudShadow;
                     }
 
                     float curdensity = saturate( cursample * invSteps );
                     float shadow = exp( - shadowDist * invShadowSteps );
+
                     lightColor += shadow * curdensity * lightPower * (cloudColor);
                     lightPower *= (1. - curdensity);
                     
@@ -989,7 +990,7 @@ Shader "SCRN/Dice"
         #ifdef UNITY_PASS_FORWARDBASE
             float3 glow = diceCheapGlow(surfacePos, mI.rd);
             glow.rgb = glow.rgb * (1.0 + audio1);
-            mI.col.rgb += glow * ((mI.matID == 1.0) ? 0.2 : 1.0);
+            mI.col.rgb += glow * ((mI.matID == 1.0) ? 0.1 : 1.0);
         #endif
 
             outDepth = mI.depth;

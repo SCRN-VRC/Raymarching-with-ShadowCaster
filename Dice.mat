@@ -38,18 +38,18 @@ Material:
     m_Floats:
     - _CircleTex1Scale: 7
     - _Cloud: 0
-    - _CloudNoiseScale: 6
-    - _CloudScale: 5.2
-    - _CloudShadow: 0.25
-    - _CloudSharpness: 13.1
+    - _CloudNoiseScale: 9.46
+    - _CloudScale: 3.18
+    - _CloudShadow: 0.517
+    - _CloudSharpness: 8.4
     - _EdgeCut: 0.781
     - _EdgeRound: 0.712
     - _Smoothness: 0.9
     m_Colors:
     - _CircleCol: {r: 3, g: 3, b: 3, a: 1}
-    - _CloudColor: {r: 1, g: 1, b: 1, a: 1}
-    - _CloudGlowCol: {r: 0, g: 1.8, b: 9, a: 1}
+    - _CloudColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+    - _CloudGlowCol: {r: 0.74, g: 0, b: 3.2, a: 1}
     - _CloudOffset: {r: 0.05, g: -0.04, b: 0.07, a: 0}
     - _FrameCol: {r: 1.5, g: 1.5, b: 1.5, a: 1}
-    - _GlowCol: {r: 0, g: 0.9, b: 3, a: 1}
+    - _GlowCol: {r: 2.48, g: 0, b: 4.54, a: 1}
     - _Test: {r: 0, g: 0, b: 0, a: 0}
