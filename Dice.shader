@@ -77,7 +77,7 @@ Shader "SCRN/Dice"
             float4 modelPos : TEXCOORD2;
             float3 center : TEXCOORD3;
             float maxScale : TEXCOORD4;
-            UNITY_VERTEX_INPUT_INSTANCE_ID
+            UNITY_VERTEX_OUTPUT_STEREO
         };
 
         struct marchInOut
@@ -126,9 +126,9 @@ Shader "SCRN/Dice"
         {
             v2f o;
 
-            // instancing
-            UNITY_SETUP_INSTANCE_ID(v);
-            UNITY_TRANSFER_INSTANCE_ID(v, o);
+            UNITY_SETUP_INSTANCE_ID( v );
+            UNITY_INITIALIZE_OUTPUT( v2f, o );
+            UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO( o );
 
             // check if the current projection is orthographic or not from the current projection matrix
             bool isOrtho = UNITY_MATRIX_P._m33 == 1.0;
@@ -848,6 +848,7 @@ Shader "SCRN/Dice"
             // we are using the unity_ObjectToWorld transform matrix
             // and in instanced shaders, that needs the instance id
             UNITY_SETUP_INSTANCE_ID(i);
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX( i );
 
             marchInOut mI;
 
@@ -1018,6 +1019,7 @@ Shader "SCRN/Dice"
             ) : SV_Target
         {
             UNITY_SETUP_INSTANCE_ID(i);
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX( i );
 
             marchInOut mI;
 
